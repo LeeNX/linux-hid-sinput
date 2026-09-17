@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Host-side protocol conformance test.
  *
@@ -106,6 +106,7 @@ static void test_features_response(void)
 	uint8_t flags0 = SI_FLAG0_ACCEL | SI_FLAG0_GYRO | SI_FLAG0_LEFT_STICK |
 			 SI_FLAG0_RIGHT_TRIGGER;
 	uint8_t flags1 = SI_FLAG1_RGB_LED;
+
 	pkt[SI_FEAT_FLAGS_0] = flags0;
 	pkt[SI_FEAT_FLAGS_1] = flags1;
 
@@ -115,9 +116,11 @@ static void test_features_response(void)
 	CHECK(pkt[SI_CMD_ECHO] == SINPUT_CMD_FEATURES, "features echo mismatch");
 
 	uint16_t proto_ver = get_le16(pkt, SI_FEAT_PROTOCOL_VER);
+
 	CHECK(proto_ver == 3, "protocol version mismatch: got %u", proto_ver);
 
 	uint16_t poll_rate = get_le16(pkt, SI_FEAT_POLL_RATE_US);
+
 	CHECK(poll_rate == 1000, "poll rate mismatch: got %u", poll_rate);
 
 	CHECK((pkt[SI_FEAT_FLAGS_0] & SI_FLAG0_ACCEL) != 0, "accel flag not set");

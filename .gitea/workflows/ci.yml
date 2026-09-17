@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# NOTE: `runs-on: ubuntu-latest` assumes a runner label of that name is
+# registered on the act_runner instance. Adjust if your runner uses a
+# different label. `actions/checkout@v4` needs the runner to reach
+# github.com; use `https://gitea.com/actions/checkout@v4` instead if it
+# only has network access to this Gitea instance.
+
+jobs:
+  # Host-side protocol byte-offset/flag decode test. No kernel headers
+  # needed, so this is the fast/cheap check that runs first.
+  protocol-check:
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: apt-get update -qq && apt-get install -y -qq build-essential
+      - name: make check
+        run: make check
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    container: koalaman/shellcheck-alpine:stable
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck scripts/*.sh
+
+  # Linux kernel style checker. LINUX_VERSION_CODE/CONSTANT_COMPARISON are
+  # ignored: checkpatch expects in-tree code that targets one kernel
+  # version, but this is an out-of-tree DKMS driver that has to compile
+  # against a range of kernel versions, so the LINUX_VERSION_CODE guard in
+  # src/sinput.c is intentional. tests/ is host-side code, not kernel
+  # code, so it is not checked here.
+  checkpatch:
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install perl and fetch checkpatch.pl
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq perl wget
+          mkdir -p /tmp/checkpatch
+          wget -q -O /tmp/checkpatch/checkpatch.pl https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl
+          wget -q -O /tmp/checkpatch/spelling.txt https://raw.githubusercontent.com/torvalds/linux/master/scripts/spelling.txt
+          wget -q -O /tmp/checkpatch/const_structs.checkpatch https://raw.githubusercontent.com/torvalds/linux/master/scripts/const_structs.checkpatch
+      - name: checkpatch
+        run: |
+          perl /tmp/checkpatch/checkpatch.pl --no-tree --no-signoff \
+            --ignore=LINUX_VERSION_CODE,CONSTANT_COMPARISON \
+            --file src/sinput.c src/sinput_protocol.h
+
+  # Compile the module against real kernel headers for a couple of
+  # released kernel versions. This is a compile check only: it catches
+  # build breaks (it already caught two), not runtime/behavioural bugs,
+  # since no SInput hardware is available in CI.
+  kernel-build:
+    runs-on: ubuntu-latest
+    container: debian:${{ matrix.release }}
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [bookworm, trixie]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kernel build dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq build-essential bc flex bison libssl-dev libelf-dev sparse \
+            linux-headers-$(dpkg --print-architecture)
+      - name: Locate installed kernel headers
+        id: kdir
+        run: |
+          kver=$(ls /lib/modules)
+          echo "kdir=/lib/modules/${kver}/build" >> "$GITHUB_OUTPUT"
+      - name: Build module
+        run: make KDIR=${{ steps.kdir.outputs.kdir }}
+      - name: Extra compiler warnings (W=1)
+        run: |
+          make KDIR=${{ steps.kdir.outputs.kdir }} clean
+          make KDIR=${{ steps.kdir.outputs.kdir }} W=1
+      - name: Sparse static analysis
+        run: |
+          make KDIR=${{ steps.kdir.outputs.kdir }} clean
+          make KDIR=${{ steps.kdir.outputs.kdir }} C=2 CF="-D__CHECK_ENDIAN__"

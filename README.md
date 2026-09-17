@@ -92,6 +92,26 @@ This only exercises the report byte-offset/flag math in
 `src/sinput_protocol.h` against synthetic packets; it is not a substitute for
 testing against real hardware.
 
+## CI
+
+`.gitea/workflows/ci.yml` runs on every push/PR and covers everything that is
+possible without real hardware:
+
+* `protocol-check` — `make check` (the decode test above)
+* `shellcheck` — lints `scripts/*.sh`
+* `checkpatch` — Linux kernel style check against `src/`. `LINUX_VERSION_CODE`
+  and `CONSTANT_COMPARISON` are ignored: those checkpatch rules assume in-tree
+  code that targets a single kernel version, but this driver is out-of-tree
+  and has to compile across a range of kernel versions.
+* `kernel-build` — compiles the module against real kernel headers on a small
+  matrix of Debian releases (currently bookworm/6.1 and trixie/6.12), plus a
+  `W=1` extra-warnings pass and a `sparse` pass. This is a compile check only;
+  it cannot catch runtime/protocol bugs without a real SInput device.
+
+To reproduce the kernel-build job locally without Docker/Gitea, install
+`linux-headers-$(dpkg --print-architecture)` in a matching container and run
+`make KDIR=/lib/modules/$(ls /lib/modules)/build`.
+
 Or install through DKMS:
 
 ```sh
