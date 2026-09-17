@@ -34,14 +34,21 @@ The module:
 1. binds to the SInput generic test VID/PID (`2E8A:10C6`);
 2. uses the Linux HID framework;
 3. creates an explicit evdev input device instead of relying on `hid-generic`;
-4. decodes the SInput state report;
-5. exposes buttons, D-pad, sticks and analog triggers;
-6. exposes a separate IMU input device when IMU capability is advertised by the
-   feature response;
-7. records battery/power fields for future `power_supply` integration.
+4. sends the SInput `FEATURES` command on probe and decodes the response
+   (protocol version, polling rate, sticks/triggers/accel/gyro/rumble/LED
+   support) with a short timeout, falling back to "assume everything is
+   present" if the device never answers;
+5. decodes the SInput state report;
+6. exposes buttons, D-pad, and only the sticks/triggers the feature response
+   (or the fallback) says exist;
+7. exposes a separate IMU input device, with only the accel/gyro axes the
+   device actually advertises;
+8. records battery/power fields for future `power_supply` integration.
 
-Feature-report discovery, rumble, player LEDs, RGB LEDs, touchpads, and a proper
-`power_supply` class device are intentionally left as follow-up work.
+Rumble, player LEDs, RGB LEDs, touchpads, and a proper `power_supply` class
+device are intentionally left as follow-up work. The feature-response layout
+is reverse-derived from SDL's SInput HIDAPI driver (see `docs/research.md`),
+not from a stable spec, so treat the byte offsets as best-effort.
 
 ## Why a kernel driver?
 
@@ -71,8 +78,19 @@ Build locally:
 
 ```sh
 make
-sudo insmod sinput.ko
+sudo insmod src/sinput.ko
 ```
+
+Run the host-side protocol decode checks (no kernel headers required, works
+on any machine including macOS/CI):
+
+```sh
+make check
+```
+
+This only exercises the report byte-offset/flag math in
+`src/sinput_protocol.h` against synthetic packets; it is not a substitute for
+testing against real hardware.
 
 Or install through DKMS:
 
@@ -113,17 +131,19 @@ feature set as evidence that SInput is ready for upstream Linux.
 * [x] HID binding
 * [x] basic SInput state report decoding
 * [x] evdev buttons/D-pad/axes
-* [ ] capability report discovery
-* [ ] dynamic capability-driven input mapping
+* [x] capability/feature report request + response parsing
+* [x] capability-driven axis + IMU registration (sticks, triggers, accel, gyro)
+* [x] protocol version / polling-rate logging
+* [x] host-side protocol decode test (`make check`)
+* [ ] capability-driven *button* mapping (buttons are still always registered)
 * [ ] battery / `power_supply`
-* [ ] IMU / Linux sensor representation
-* [ ] force feedback
+* [ ] force feedback / rumble output command
 * [ ] player LEDs
 * [ ] RGB LED
 * [ ] touchpads
-* [ ] output-command serialization and locking
+* [ ] output-command serialization and locking (only a single request-on-probe today)
 * [ ] USB + Bluetooth transport testing
 * [ ] suspend/resume
-* [ ] kernel version compatibility matrix
+* [ ] kernel version compatibility matrix (compile-verified on 6.1 and 6.12 so far; no real hardware yet)
 * [ ] HIL tests using ESP32 SInput firmware
-* [ ] evaluate whether an upstream Linux HID driver is justified
+* [ ] evaluate whether an upstream Linux HID driver is justified (where would this posted/reported?)
