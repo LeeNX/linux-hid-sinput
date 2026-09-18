@@ -207,9 +207,14 @@ reports and compare:
 ## Sources
 
 * SInput development specification:
-  https://docs.handheldlegend.com/s/sinput/doc/sinput-hid-protocol-dev-SNSaEw36nc
+  https://docs.handheldlegend.com/s/sinput
+* SInput-HID reference repository (Hand Held Legend):
+  https://github.com/HandHeldLegend/SInput-HID
 * SDL SInput implementation:
   https://github.com/libsdl-org/SDL/blob/main/src/joystick/hidapi/SDL_hidapi_sinput.c
+  — fetched from `main`; the same code shipped in the SDL 3.4.x release
+  series (https://github.com/libsdl-org/SDL/releases/tag/release-3.4.0),
+  first publicly available around 3.4.6.
 * Linux HID introduction:
   https://www.kernel.org/doc/html/latest/hid/hidintro.html
 * Linux HID configuration:
@@ -218,3 +223,17 @@ reports and compare:
   https://github.com/torvalds/linux/blob/master/drivers/hid/hid-playstation.c
 * Linux Nintendo HID driver:
   https://github.com/torvalds/linux/blob/master/drivers/hid/hid-nintendo.c
+
+## Hardware and testing status
+
+No SInput hardware is owned. Everything above is derived from the published
+specification and SDL's reference implementation, not from capturing a real
+device's traffic — treat protocol details here as best-effort until
+validated against real hardware.
+
+The planned test target is a DIY SInput-compatible controller built on
+lemmingDev's ESP32-BLE-Gamepad firmware
+(https://github.com/lemmingDev/ESP32-BLE-Gamepad), with hardware-in-the-loop
+testing tracked separately in
+https://github.com/LeeNX/ESP32-BLE-Gamepad-HIL against a Raspberry Pi 3 (see
+`docs/rpi-hil.md` for the Pi-side packaging/build story).

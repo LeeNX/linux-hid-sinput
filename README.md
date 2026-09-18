@@ -7,6 +7,19 @@ driver. The first goal is to establish a clean DKMS/module test loop against SIn
 devices, then add the protocol features that Linux's generic HID/gamepad path does
 not expose cleanly.
 
+**No SInput hardware is owned.** Development is based on the published
+[SInput specification](https://docs.handheldlegend.com/s/sinput) and Hand Held
+Legend's [SInput-HID](https://github.com/HandHeldLegend/SInput-HID) reference
+repository, cross-checked against SDL's SInput HIDAPI implementation (the same
+code shipped in the [SDL 3.4.x release series](https://github.com/libsdl-org/SDL/releases/tag/release-3.4.0),
+first publicly available around 3.4.6) — not from capturing a real device's
+traffic. Treat protocol details as best-effort until validated against real
+hardware. The planned test target is a DIY SInput-compatible controller built
+on [lemmingDev/ESP32-BLE-Gamepad](https://github.com/lemmingDev/ESP32-BLE-Gamepad),
+with hardware-in-the-loop testing tracked in
+[LeeNX/ESP32-BLE-Gamepad-HIL](https://github.com/LeeNX/ESP32-BLE-Gamepad-HIL)
+against a Raspberry Pi 3 — see `docs/rpi-hil.md` for the Pi-side story.
+
 ## Research snapshot
 
 As of 2026-09-16:
