@@ -190,6 +190,28 @@ To reproduce the kernel-build job locally without Docker/Gitea, install
 `linux-headers-$(dpkg --print-architecture)` in a matching container and run
 `make KDIR=/lib/modules/$(ls /lib/modules)/build`.
 
+### Keeping CI dependencies current
+
+* **GitHub**: `.github/dependabot.yml` watches `.github/workflows/*.yml` for
+  new `actions/*` releases and opens PRs weekly.
+* **Gitea**: `.gitea/workflows/renovate.yml` runs [Renovate](https://docs.renovatebot.com/)
+  itself weekly (self-hosted platforms don't get a hosted Dependabot/Renovate
+  app), configured by `renovate.json` at the repo root. Needs two one-time
+  manual steps: create a Gitea access token (a dedicated bot account keeps PR
+  attribution clean) with repo read/write scope as a `RENOVATE_TOKEN` secret,
+  **and** a read-only github.com personal access token as
+  `RENOVATE_GITHUB_COM_TOKEN` — confirmed by actually running Renovate
+  locally (`RENOVATE_PLATFORM=local`) that the second one is genuinely
+  required, not just nice-to-have for rate limits: without it, Renovate's
+  github-actions manager hard-skips every `actions/*` dependency
+  (`skipReason: github-token-required`) no matter which platform it's
+  opening PRs against. Until both secrets exist, the job runs and
+  fails/no-ops at the relevant step rather than silently doing nothing.
+  `renovate.json` also carries the one rule that has to stay
+  platform-specific: it caps `actions/upload-artifact` below v4 in
+  `.gitea/workflows/ci.yml` only (the Results-API backend issue above),
+  while leaving `.github/workflows/ci.yml` free to track latest.
+
 Inspect:
 
 ```sh

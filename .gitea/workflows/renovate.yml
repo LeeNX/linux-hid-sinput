@@ -1,0 +1,56 @@
+name: Renovate
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+# Self-hosted Renovate, the Gitea-side equivalent of GitHub's Dependabot
+# (.github/dependabot.yml) -- there's no hosted Renovate app for
+# arbitrary self-hosted Gitea instances, so this runs the official
+# renovate/renovate image directly as the job's own container, same
+# execution model as every other job in .gitea/workflows/ci.yml.
+#
+# Needs two one-time manual steps this can't do for you:
+#
+# 1. Create a Gitea access token (a dedicated bot account is cleaner
+#    than a personal one, since every PR/commit Renovate makes will be
+#    attributed to whichever account owns the token) with repo
+#    read/write scope, then add it as a secret named RENOVATE_TOKEN on
+#    this repo (or org-wide).
+# 2. Create a GitHub personal access token (github.com, read-only,
+#    no scopes needed -- it's only used to look up action release
+#    versions) and add it as a secret named RENOVATE_GITHUB_COM_TOKEN.
+#    Verified locally with RENOVATE_PLATFORM=local that this is
+#    genuinely required, not just nice-to-have for rate limits:
+#    Renovate's github-actions manager hard-skips every actions/*
+#    dependency with skipReason "github-token-required" if this isn't
+#    set, regardless of which platform (Gitea here) it's opening PRs
+#    against.
+#
+# Until both secrets exist, this job runs and fails/no-ops at the
+# relevant step rather than silently doing nothing useful.
+#
+# renovate.json at the repo root controls what gets updated, including
+# the rule that keeps actions/upload-artifact capped below v4 in
+# .gitea/workflows/ci.yml specifically (v4+ needs a Results API backend
+# this Gitea instance doesn't speak -- see that file's header comment)
+# while leaving .github/workflows/ci.yml free to track latest. Verified
+# with RENOVATE_PLATFORM=local + a dummy RENOVATE_GITHUB_COM_TOKEN that
+# this rule is picked up correctly for both files before relying on it.
+jobs:
+  renovate:
+    runs-on: arm64
+    container: renovate/renovate:latest
+    env:
+      RENOVATE_PLATFORM: gitea
+      RENOVATE_ENDPOINT: https://gitea.h.leenx.nz/api/v1/
+      RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+      RENOVATE_GITHUB_COM_TOKEN: ${{ secrets.RENOVATE_GITHUB_COM_TOKEN }}
+      RENOVATE_AUTODISCOVER: "false"
+      RENOVATE_REPOSITORIES: leenx-foss/linux-hid-sinput
+      # Opens PRs for review; does not merge them automatically. Add
+      # RENOVATE_AUTOMERGE / platformAutomerge in renovate.json later
+      # if you decide you want that.
+    steps:
+      - run: renovate

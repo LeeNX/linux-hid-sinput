@@ -1,0 +1,13 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "description": "This Gitea instance's act_runner doesn't speak actions/upload-artifact v4+'s Results API backend (fails with ECONNREFUSED) -- cap it at v3.x there. The GitHub workflow deliberately isn't covered by this rule; it should keep tracking latest. See the header comment in .gitea/workflows/ci.yml.",
+      "matchManagers": ["github-actions"],
+      "matchFileNames": [".gitea/workflows/**"],
+      "matchDepNames": ["actions/upload-artifact"],
+      "allowedVersions": "<4.0.0"
+    }
+  ]
+}
