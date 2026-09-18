@@ -108,30 +108,46 @@ that commit separately.
 
 ## What went wrong on the first real release, and what's still unverified
 
-Cutting `v0.1.0` was the first time either release workflow ran against a
-real tag push, and it surfaced two things `act` and standalone request
-checks hadn't caught:
+Cutting `v0.1.0` took three attempts against real tag pushes to get past —
+each round surfaced something neither `act` nor standalone request checks
+had caught:
 
 * **Gitea**: the container-network DNS issue described above. Fixed by
   switching that workflow to produce a downloadable artifact instead of
   calling the release API (see above) — not a real fix for the underlying
   network limitation, just a way to route around it.
-* **GitHub**: raw `git` commands in the "Generate release notes" step
-  failed with `fatal: detected dubious ownership in repository` — the
+* **GitHub, round 1**: raw `git` commands in the "Generate release notes"
+  step failed with `fatal: detected dubious ownership in repository` — the
   checkout is owned by a different UID than the one running later `run:`
   steps in GitHub's hosted container setup. `act` doesn't reproduce this
   (its container UID handling differs from a real GitHub-hosted runner),
   so no amount of local dry-running caught it. Fixed by explicitly running
   `git config --global --add safe.directory "$GITHUB_WORKSPACE"` right
   after checkout.
+* **GitHub, round 2**: with round 1 fixed, the create-release call
+  succeeded, but parsing its response failed with `jq: parse error:
+  Invalid string: control characters ... must be escaped`, which then
+  cascaded into `curl: (3) URL rejected: No host part in the URL` on the
+  asset-upload call (an empty `upload_url` from the failed parse). Root
+  cause: `upload_url=$(echo "$response" | jq -r .upload_url | ...)` —
+  this step's shell interprets backslash escapes in `echo`'s argument by
+  default (dash-style, not bash's default of leaving them alone), which
+  silently turns the literal `\n` sequences legitimately present inside
+  the response body's JSON string back into raw newline bytes before jq
+  ever sees them. Reproduced exactly (same error text) with a synthetic
+  response locally, and confirmed `printf '%s' "$response" | jq ...`
+  (which never reinterprets escapes, regardless of shell) fixes it.
+  `$body`'s own construction earlier in the same step was never affected
+  by this, since it's built via command substitution (`$(jq -Rs . < ...)`),
+  which captures a command's stdout verbatim with no echo involved.
 
-Both fixes were re-verified with `act` before being committed, though `act`
-couldn't have caught the dubious-ownership bug in the first place, so that
-fix's real confirmation is the next tag push. The GitHub release/asset API
-calls remain unconfirmed end-to-end: the `v0.1.0` run failed at the
-release-notes step, before ever reaching them, so no GitHub Release exists
-yet for `v0.1.0` — pick it manually from the tag for now, the same as
-Gitea, or push a new tag once you're ready to trust the fixed workflow.
+All three fixes were re-verified before being committed — the Gitea and
+GitHub-round-2 fixes empirically (a real container run for Gitea's build
+steps, and an exact reproduction of the round-2 error message and its fix
+for GitHub), the round-1 fix with `act`, though `act` couldn't have caught
+that bug in the first place since it doesn't reproduce GitHub-hosted
+runners' container UID handling — so that fix's real confirmation was
+necessarily the next real tag push, same as round 2.
 
 `scripts/release.sh` itself was tested more thoroughly before ever running
 for real, against a scratch clone: dry-run, a real bump/commit/tag,

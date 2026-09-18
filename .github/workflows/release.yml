@@ -100,7 +100,13 @@ jobs:
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -d "{\"tag_name\": \"$tag\", \"name\": \"$tag\", \"body\": $body, \"prerelease\": $prerelease}")
-          upload_url=$(echo "$response" | jq -r .upload_url | sed 's/{.*}//')
+          # printf, not echo: this step's shell interprets backslash escapes
+          # in echo's argument by default (dash-style), which would silently
+          # turn the literal \n sequences inside the response body's JSON
+          # string back into raw newline bytes before jq ever sees them --
+          # producing invalid JSON that only jq's strict parser complains
+          # about. printf never does this reinterpretation.
+          upload_url=$(printf '%s' "$response" | jq -r .upload_url | sed 's/{.*}//')
 
           for f in out/*.deb; do
             curl -fsSL -X POST "${upload_url}?name=$(basename "$f")" \
