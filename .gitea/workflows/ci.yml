@@ -11,6 +11,14 @@ on:
 # different label. `actions/checkout@v4` needs the runner to reach
 # github.com; use `https://gitea.com/actions/checkout@v4` instead if it
 # only has network access to this Gitea instance.
+#
+# Every job below installs `nodejs` (plus `git`/`ca-certificates`) as its
+# very first step, before actions/checkout. actions/checkout@v4 and
+# actions/upload-artifact@v4 are JavaScript actions: act_runner execs
+# `node` directly inside whatever `container:` the job specifies, and a
+# plain debian/alpine base image has no Node.js at all, which fails with
+# "executable file `node` not found in $PATH" before any of our own
+# steps even run.
 
 jobs:
   # Host-side protocol byte-offset/flag decode test. No kernel headers
@@ -19,9 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:bookworm
     steps:
-      - uses: actions/checkout@v4
       - name: Install build tools
-        run: apt-get update -qq && apt-get install -y -qq build-essential
+        run: apt-get update -qq && apt-get install -y -qq build-essential nodejs git ca-certificates
+      - uses: actions/checkout@v4
       - name: make check
         run: make check
 
@@ -29,6 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     container: koalaman/shellcheck-alpine:stable
     steps:
+      - name: Install Node.js (actions/checkout needs it in this container)
+        run: apk add --no-cache nodejs git ca-certificates
       - uses: actions/checkout@v4
       - name: shellcheck
         run: shellcheck scripts/*.sh
@@ -43,11 +53,11 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:bookworm
     steps:
+      - name: Install perl, wget, and Node.js (actions/checkout needs it in this container)
+        run: apt-get update -qq && apt-get install -y -qq perl wget nodejs git ca-certificates
       - uses: actions/checkout@v4
-      - name: Install perl and fetch checkpatch.pl
+      - name: Fetch checkpatch.pl
         run: |
-          apt-get update -qq
-          apt-get install -y -qq perl wget
           mkdir -p /tmp/checkpatch
           wget -q -O /tmp/checkpatch/checkpatch.pl https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl
           wget -q -O /tmp/checkpatch/spelling.txt https://raw.githubusercontent.com/torvalds/linux/master/scripts/spelling.txt
@@ -70,12 +80,12 @@ jobs:
       matrix:
         release: [bookworm, trixie]
     steps:
-      - uses: actions/checkout@v4
       - name: Install kernel build dependencies
         run: |
           apt-get update -qq
           apt-get install -y -qq build-essential bc flex bison libssl-dev libelf-dev sparse \
-            linux-headers-$(dpkg --print-architecture)
+            nodejs git ca-certificates linux-headers-$(dpkg --print-architecture)
+      - uses: actions/checkout@v4
       - name: Locate installed kernel headers
         id: kdir
         run: |
@@ -111,12 +121,12 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:bookworm
     steps:
-      - uses: actions/checkout@v4
       - name: Install build and dkms dependencies
         run: |
           apt-get update -qq
           apt-get install -y -qq dkms build-essential bc flex bison libssl-dev libelf-dev \
-            linux-headers-$(dpkg --print-architecture)
+            nodejs git ca-certificates linux-headers-$(dpkg --print-architecture)
+      - uses: actions/checkout@v4
       - name: Build source .deb
         run: |
           mkdir -p out
@@ -153,11 +163,12 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:trixie
     steps:
-      - uses: actions/checkout@v4
       - name: Install build tools
         run: |
           apt-get update -qq
-          apt-get install -y -qq curl build-essential bc flex bison libssl-dev libelf-dev
+          apt-get install -y -qq curl build-essential bc flex bison libssl-dev libelf-dev \
+            nodejs git ca-certificates
+      - uses: actions/checkout@v4
       - name: Trust the Raspberry Pi apt archive
         run: |
           curl -fsSL \
