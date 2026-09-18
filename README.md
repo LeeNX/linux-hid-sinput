@@ -227,6 +227,13 @@ udevadm info /sys/bus/hid/devices/*/hidraw*/device 2>/dev/null
 evtest
 ```
 
+## Releases
+
+See [`RELEASE.md`](RELEASE.md). Short version: `scripts/release.sh 0.1.0`
+bumps `dkms.conf`, commits, and tags locally; pushing the tag triggers
+`.gitea/workflows/release.yml` and `.github/workflows/release.yml` to build
+both `.deb` flavors and attach them to a Release on each platform.
+
 ## Safety during development
 
 This is an experimental kernel module. Keep a second console available and test

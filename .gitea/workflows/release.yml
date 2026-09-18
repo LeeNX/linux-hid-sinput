@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Triggered directly by the tag push (not gated on the main CI workflow
+# via workflow_run -- unverified whether this Gitea Actions version
+# supports that trigger at all, and it's not needed here anyway: the
+# same push that creates the tag also pushes the branch commit, which
+# triggers .gitea/workflows/ci.yml's full check suite independently, so
+# this workflow doesn't need to re-verify the build -- it only needs to
+# build the two release artifacts and publish them.
+#
+# Needs a Gitea access token with repo read/write scope as a secret
+# named RELEASE_TOKEN (the same PAT already created for RENOVATE_TOKEN
+# works fine here too, if you'd rather not manage a second one).
+# Unverified against a real Gitea release: no credentials available to
+# test create-release/upload-asset against a live instance from here --
+# the REST API calls below follow Gitea's documented API shape, but the
+# first real tag push is what actually confirms this end to end.
+jobs:
+  release:
+    runs-on: arm64
+    container: debian:trixie
+    steps:
+      - name: Install Node.js and build tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq curl ca-certificates gnupg jq build-essential bc flex bison libssl-dev libelf-dev
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Verify dkms.conf version matches the tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          conf_version=$(grep -m1 '^PACKAGE_VERSION=' dkms.conf | cut -d'"' -f2)
+          if [ "$conf_version" != "$version" ]; then
+            echo "::error::tag $tag doesn't match dkms.conf PACKAGE_VERSION=$conf_version" >&2
+            exit 1
+          fi
+      - name: Build source .deb
+        run: |
+          mkdir -p out
+          ./scripts/build-source-deb.sh out
+      - name: Trust the Raspberry Pi apt archive
+        run: |
+          curl -fsSL \
+            https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb \
+            -o /tmp/keyring.deb
+          dpkg -i /tmp/keyring.deb
+          echo 'deb http://archive.raspberrypi.com/debian/ trixie main' \
+            > /etc/apt/sources.list.d/raspi.list
+          apt-get update -qq
+      - name: Install RPi3/RPi4 (rpi-v8) kernel headers
+        run: apt-get install -y -qq linux-headers-rpi-v8
+      - name: Build binary .deb
+        run: |
+          kdir=$(ls -d /lib/modules/*/build | head -1)
+          ./scripts/build-binary-deb.sh "$kdir" out
+      - name: Generate release notes
+        run: |
+          prev_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -n "$prev_tag" ]; then
+            git log --pretty=format:'* %s (%h)' "${prev_tag}..HEAD" > /tmp/notes.md
+          else
+            git log --pretty=format:'* %s (%h)' HEAD > /tmp/notes.md
+          fi
+      - name: Create Gitea release and upload assets
+        env:
+          GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GITEA_API: https://gitea.h.leenx.nz/api/v1
+          REPO: leenx-foss/linux-hid-sinput
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          prerelease=false
+          case "$tag" in *-*) prerelease=true ;; esac
+
+          body=$(jq -Rs . < /tmp/notes.md)
+          release_id=$(curl -fsSL -X POST "$GITEA_API/repos/$REPO/releases" \
+            -H "Authorization: token $GITEA_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\": \"$tag\", \"name\": \"$tag\", \"body\": $body, \"prerelease\": $prerelease}" \
+            | jq -r .id)
+
+          for f in out/*.deb; do
+            curl -fsSL -X POST "$GITEA_API/repos/$REPO/releases/$release_id/assets?name=$(basename "$f")" \
+              -H "Authorization: token $GITEA_TOKEN" \
+              -F "attachment=@$f"
+          done

@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Mirrors .gitea/workflows/release.yml (same version-check, same two
+# build steps, same release-notes generation) but uses the GitHub REST
+# API directly with the built-in GITHUB_TOKEN rather than a manually
+# created PAT -- GitHub provides one automatically for every workflow
+# run, scoped by the `permissions:` block below, so no secret needs to
+# be created for this file specifically (unlike the Gitea one, which
+# needs a RELEASE_TOKEN since there's no equivalent auto-issued token
+# on a self-hosted instance).
+#
+# Triggered directly by the tag push, same reasoning as the Gitea file:
+# the branch push that comes with it already triggers the full CI
+# workflow independently, so this one only needs to build and publish.
+#
+# Unverified against a real GitHub release: no credentials available to
+# test create-release/upload-asset against a live repo from here -- the
+# REST API calls below follow GitHub's documented API shape, but the
+# first real tag push is what actually confirms this end to end.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04-arm
+    container: debian:trixie
+    steps:
+      - name: Install Node.js and build tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq curl ca-certificates gnupg jq build-essential bc flex bison libssl-dev libelf-dev
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Verify dkms.conf version matches the tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          conf_version=$(grep -m1 '^PACKAGE_VERSION=' dkms.conf | cut -d'"' -f2)
+          if [ "$conf_version" != "$version" ]; then
+            echo "::error::tag $tag doesn't match dkms.conf PACKAGE_VERSION=$conf_version"
+            exit 1
+          fi
+      - name: Build source .deb
+        run: |
+          mkdir -p out
+          ./scripts/build-source-deb.sh out
+      - name: Trust the Raspberry Pi apt archive
+        run: |
+          curl -fsSL \
+            https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb \
+            -o /tmp/keyring.deb
+          dpkg -i /tmp/keyring.deb
+          echo 'deb http://archive.raspberrypi.com/debian/ trixie main' \
+            > /etc/apt/sources.list.d/raspi.list
+          apt-get update -qq
+      - name: Install RPi3/RPi4 (rpi-v8) kernel headers
+        run: apt-get install -y -qq linux-headers-rpi-v8
+      - name: Build binary .deb
+        run: |
+          kdir=$(ls -d /lib/modules/*/build | head -1)
+          ./scripts/build-binary-deb.sh "$kdir" out
+      - name: Generate release notes
+        run: |
+          prev_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -n "$prev_tag" ]; then
+            git log --pretty=format:'* %s (%h)' "${prev_tag}..HEAD" > /tmp/notes.md
+          else
+            git log --pretty=format:'* %s (%h)' HEAD > /tmp/notes.md
+          fi
+      - name: Create GitHub release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_API: https://api.github.com
+          REPO: ${{ github.repository }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          prerelease=false
+          case "$tag" in *-*) prerelease=true ;; esac
+
+          body=$(jq -Rs . < /tmp/notes.md)
+          response=$(curl -fsSL -X POST "$GITHUB_API/repos/$REPO/releases" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -d "{\"tag_name\": \"$tag\", \"name\": \"$tag\", \"body\": $body, \"prerelease\": $prerelease}")
+          upload_url=$(echo "$response" | jq -r .upload_url | sed 's/{.*}//')
+
+          for f in out/*.deb; do
+            curl -fsSL -X POST "${upload_url}?name=$(basename "$f")" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$f"
+          done

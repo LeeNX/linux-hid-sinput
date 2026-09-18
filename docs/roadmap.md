@@ -6,6 +6,9 @@
 - [x] basic state report decoding
 - [x] evdev gamepad
 - [x] prototype IMU event device
+- [x] release process (`scripts/release.sh` + Gitea/GitHub release
+      workflows attaching both `.deb` flavors; see `RELEASE.md`) -- tooling
+      only so far, v0.1.0 not yet cut
 
 ## 0.2 - protocol discovery
 - [ ] decode report descriptor and verify report sizes
