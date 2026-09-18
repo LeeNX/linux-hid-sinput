@@ -1,18 +1,18 @@
 # Kernel module build artifacts
 *.o
-*.o.cmd
 *.mod
 *.mod.c
 *.mod.o
-*.mod.o.cmd
 *.ko
-*.ko.cmd
 *.symvers
-*.symvers.cmd
 *.order
-*.order.cmd
+.*.cmd
 .tmp_versions/
 .cache.mk
+
+# Binary .deb packaging output (scripts/build-binary-deb.sh)
+/out/
+*.deb
 
 # Host-side test build artifacts
 tests/decode_test

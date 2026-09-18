@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # NOTE: `runs-on: ubuntu-latest` assumes a runner label of that name is
 # registered on the act_runner instance. Adjust if your runner uses a
@@ -90,3 +91,46 @@ jobs:
         run: |
           make KDIR=${{ steps.kdir.outputs.kdir }} clean
           make KDIR=${{ steps.kdir.outputs.kdir }} C=2 CF="-D__CHECK_ENDIAN__"
+
+  # Precompiled binary .deb for a real Raspberry Pi 3 running 64-bit
+  # Raspberry Pi OS (trixie). Unlike kernel-build above, this targets
+  # Raspberry Pi's own kernel headers (rpi-v8 variant, shared by RPi3 and
+  # RPi4, NOT RPi5's rpi-2712 variant) rather than generic Debian ones,
+  # since the module's vermagic must match the real device's exact
+  # kernel build. See docs/rpi-hil.md for why this is more involved than
+  # a normal apt-get install, the bookworm-vs-trixie difference, and how
+  # to pin an exact kernel version instead of always tracking "current".
+  #
+  # This can run on an arm64 Gitea runner (e.g. hosted on an RPi4/5)
+  # natively, or on any arm64 runner -- it only needs to match the
+  # *target* RPi3's architecture, not the runner's own kernel.
+  rpi3-binary-deb:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq curl build-essential bc flex bison libssl-dev libelf-dev
+      - name: Trust the Raspberry Pi apt archive
+        run: |
+          curl -fsSL \
+            https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb \
+            -o /tmp/keyring.deb
+          dpkg -i /tmp/keyring.deb
+          echo 'deb http://archive.raspberrypi.com/debian/ trixie main' \
+            > /etc/apt/sources.list.d/raspi.list
+          apt-get update -qq
+      - name: Install RPi3/RPi4 (rpi-v8) kernel headers
+        run: apt-get install -y -qq linux-headers-rpi-v8
+      - name: Build binary .deb
+        run: |
+          kdir=$(ls -d /lib/modules/*/build | head -1)
+          echo "Building against: $kdir"
+          mkdir -p out
+          ./scripts/build-binary-deb.sh "$kdir" out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sinput-rpi3-arm64-deb
+          path: out/*.deb
