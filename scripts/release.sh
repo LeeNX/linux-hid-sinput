@@ -111,26 +111,41 @@ fi
 
 conf_file="dkms.conf"
 current_version=$(grep -m1 '^PACKAGE_VERSION=' "$conf_file" | cut -d'"' -f2)
+needs_bump=true
+if [ "$current_version" = "$version" ]; then
+  needs_bump=false
+fi
 
 echo "Current version: $conf_file PACKAGE_VERSION=$current_version"
 echo "New version:     $version"
 echo "Remote(s):       ${remotes[*]}"
 
 if $dry_run; then
-  echo "(dry run) would update $conf_file, commit, and tag $tag"
+  if $needs_bump; then
+    echo "(dry run) would update $conf_file, commit, and tag $tag"
+  else
+    echo "(dry run) $conf_file is already at $version; would tag HEAD as $tag directly, no bump commit"
+  fi
   exit 0
 fi
 
-sed -i.bak "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"$version\"/" "$conf_file" && rm -f "$conf_file.bak"
-
-git add "$conf_file"
-git commit -m "Bump version to $version"
+if $needs_bump; then
+  sed -i.bak "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"$version\"/" "$conf_file" && rm -f "$conf_file.bak"
+  git add "$conf_file"
+  git commit -m "Bump version to $version"
+else
+  echo "$conf_file is already at $version; tagging HEAD directly (no bump commit needed)."
+fi
 git tag -a "$tag" -m "$tag"
 
 branch="$(git rev-parse --abbrev-ref HEAD)"
 
 echo
-echo "Committed and tagged $tag locally on $branch."
+if $needs_bump; then
+  echo "Committed and tagged $tag locally on $branch."
+else
+  echo "Tagged $tag locally on $branch (no new commit needed)."
+fi
 
 if $push; then
   for remote in "${remotes[@]}"; do
