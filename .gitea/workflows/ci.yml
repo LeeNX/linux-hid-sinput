@@ -8,22 +8,33 @@ on:
 
 # NOTE: `runs-on: ubuntu-latest` assumes a runner label of that name is
 # registered on the act_runner instance. Adjust if your runner uses a
-# different label. `actions/checkout@v4` needs the runner to reach
-# github.com; use `https://gitea.com/actions/checkout@v4` instead if it
+# different label. `actions/checkout` needs the runner to reach
+# github.com; use `https://gitea.com/actions/checkout@v7` instead if it
 # only has network access to this Gitea instance.
 #
-# Every job below installs `nodejs` (plus `git`/`ca-certificates`) as its
-# very first step, before actions/checkout. actions/checkout and
-# actions/upload-artifact are JavaScript actions: act_runner execs `node`
-# directly inside whatever `container:` the job specifies, and a plain
-# debian/alpine base image has no Node.js at all, which fails with
-# "executable file `node` not found in $PATH" before any of our own
-# steps even run.
+# Every Debian-based job installs Node.js via NodeSource's setup_lts.x
+# script (not the distro-packaged `nodejs` -- apt on bookworm only gives
+# Node 18) as its very first step, before actions/checkout. This is
+# needed for two separate reasons stacked on top of each other:
 #
-# upload-artifact is pinned to @v3, not @v4: v4 switched to GitHub's
+# - actions/checkout and actions/upload-artifact are JavaScript
+#   actions: act_runner execs `node` directly inside whatever
+#   `container:` the job specifies, and a plain debian/alpine base
+#   image has no Node.js at all ("executable file `node` not found in
+#   $PATH").
+# - Newer major versions of those actions (checkout v7, upload-artifact
+#   v4+) target node24 in their action.yml, and upload-artifact
+#   specifically needs the global `crypto`/`crypto.subtle` API (only
+#   available from Node 20+) to compute upload digests -- Node 18 fails
+#   at runtime with "crypto is not defined", not just a warning.
+#
+# koalaman/shellcheck-alpine's `apk nodejs` already gives a current
+# enough Node (v22, has global crypto), so it's left as apk-installed.
+#
+# upload-artifact is pinned to v3.2.2, not v4+: v4 switched to GitHub's
 # newer "Results" API backend, which this Gitea instance doesn't speak
-# (upload fails with ECONNREFUSED). v3 uses the older, much more widely
-# supported artifact-upload protocol.
+# (upload fails with ECONNREFUSED). v3.2.2 is the latest v3.x release,
+# using the older, much more widely supported artifact-upload protocol.
 
 jobs:
   # Host-side protocol byte-offset/flag decode test. No kernel headers
@@ -32,9 +43,13 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:bookworm
     steps:
-      - name: Install build tools
-        run: apt-get update -qq && apt-get install -y -qq build-essential nodejs git ca-certificates
-      - uses: actions/checkout@v4
+      - name: Install Node.js and build tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq curl ca-certificates gnupg build-essential
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
       - name: make check
         run: make check
 
@@ -44,7 +59,7 @@ jobs:
     steps:
       - name: Install Node.js (actions/checkout needs it in this container)
         run: apk add --no-cache nodejs git ca-certificates
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: shellcheck
         run: shellcheck scripts/*.sh
 
@@ -58,9 +73,13 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:bookworm
     steps:
-      - name: Install perl, wget, and Node.js (actions/checkout needs it in this container)
-        run: apt-get update -qq && apt-get install -y -qq perl wget nodejs git ca-certificates
-      - uses: actions/checkout@v4
+      - name: Install Node.js, perl, and wget
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq curl ca-certificates gnupg perl wget
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
       - name: Fetch checkpatch.pl
         run: |
           mkdir -p /tmp/checkpatch
@@ -85,12 +104,14 @@ jobs:
       matrix:
         release: [bookworm, trixie]
     steps:
-      - name: Install kernel build dependencies
+      - name: Install Node.js and kernel build dependencies
         run: |
           apt-get update -qq
-          apt-get install -y -qq build-essential bc flex bison libssl-dev libelf-dev sparse \
-            nodejs git ca-certificates linux-headers-$(dpkg --print-architecture)
-      - uses: actions/checkout@v4
+          apt-get install -y -qq curl ca-certificates gnupg build-essential bc flex bison libssl-dev libelf-dev sparse \
+            linux-headers-$(dpkg --print-architecture)
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
       - name: Locate installed kernel headers
         id: kdir
         run: |
@@ -126,12 +147,14 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:bookworm
     steps:
-      - name: Install build and dkms dependencies
+      - name: Install Node.js, build, and dkms dependencies
         run: |
           apt-get update -qq
-          apt-get install -y -qq dkms build-essential bc flex bison libssl-dev libelf-dev \
-            nodejs git ca-certificates linux-headers-$(dpkg --print-architecture)
-      - uses: actions/checkout@v4
+          apt-get install -y -qq curl ca-certificates gnupg dkms build-essential bc flex bison libssl-dev libelf-dev \
+            linux-headers-$(dpkg --print-architecture)
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
       - name: Build source .deb
         run: |
           mkdir -p out
@@ -147,7 +170,7 @@ jobs:
         run: |
           dpkg -r sinput-dkms
           ! dkms status | grep -q "^sinput/"
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v3.2.2
         with:
           name: sinput-dkms-source-deb
           path: out/*.deb
@@ -169,12 +192,13 @@ jobs:
     runs-on: arm64
     container: debian:trixie
     steps:
-      - name: Install build tools
+      - name: Install Node.js and build tools
         run: |
           apt-get update -qq
-          apt-get install -y -qq curl build-essential bc flex bison libssl-dev libelf-dev \
-            nodejs git ca-certificates
-      - uses: actions/checkout@v4
+          apt-get install -y -qq curl ca-certificates gnupg build-essential bc flex bison libssl-dev libelf-dev
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
       - name: Trust the Raspberry Pi apt archive
         run: |
           curl -fsSL \
@@ -192,7 +216,7 @@ jobs:
           echo "Building against: $kdir"
           mkdir -p out
           ./scripts/build-binary-deb.sh "$kdir" out
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v3.2.2
         with:
           name: sinput-rpi3-arm64-deb
           path: out/*.deb

@@ -11,18 +11,29 @@ on:
 # a self-hosted Gitea act_runner behave differently enough that a single
 # shared workflow isn't a good fit. Differences intentionally kept here:
 #
-# - actions/upload-artifact is @v4 here (GitHub's current, actively
-#   maintained version) vs @v3 on Gitea, where v4's newer "Results" API
-#   backend isn't supported by that instance.
+# - actions/upload-artifact is pinned to v7.0.1 here (GitHub's current,
+#   actively maintained line) vs v3.2.2 on Gitea, where anything v4+
+#   uses a newer "Results" API backend that instance doesn't support.
 # - rpi3-binary-deb runs on `ubuntu-24.04-arm`, GitHub's hosted Linux
 #   ARM64 runner (free for public repos). Unverified against a real
 #   GitHub Actions run as of writing -- adjust the label if GitHub has
 #   renamed/regated it by the time this runs.
-# - The `nodejs`-before-checkout step is probably unnecessary here:
-#   GitHub's own hosted runner is documented to inject its bundled
-#   Node.js into any job `container:` automatically, unlike Gitea's
-#   act_runner. Kept anyway since it's cheap and harmless, and keeps
-#   this file structurally close to the Gitea one for easier diffing.
+#
+# Every Debian-based job installs Node.js via NodeSource's setup_lts.x
+# script rather than the distro-packaged `nodejs` (apt on bookworm only
+# gives Node 18). actions/checkout and actions/upload-artifact both now
+# target node24 in their action.yml, and upload-artifact specifically
+# needs the global `crypto`/`crypto.subtle` API to compute upload
+# digests -- that's only available from Node 20+, so Node 18 fails at
+# runtime with "crypto is not defined", not just a deprecation warning.
+# Verified via `act` locally, including a real upload-artifact@v7.0.1
+# run through act's artifact-server emulation (which itself doesn't
+# fully speak v7's newer wire format, so this couldn't be verified
+# against act's emulation alone -- v6.0.0 was used for that local check
+# instead, confirming the Node-version fix, before pinning back up to
+# the actual current release for the real GitHub-hosted backend).
+# koalaman/shellcheck-alpine's `apk nodejs` already gives a current
+# enough Node (v22, has global crypto), so it's left as-is.
 
 jobs:
   # Host-side protocol byte-offset/flag decode test. No kernel headers
@@ -31,9 +42,13 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:bookworm
     steps:
-      - name: Install build tools
-        run: apt-get update -qq && apt-get install -y -qq build-essential nodejs git ca-certificates
-      - uses: actions/checkout@v4
+      - name: Install Node.js and build tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq curl ca-certificates gnupg build-essential
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
       - name: make check
         run: make check
 
@@ -43,7 +58,7 @@ jobs:
     steps:
       - name: Install Node.js (defensive; see file header)
         run: apk add --no-cache nodejs git ca-certificates
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: shellcheck
         run: shellcheck scripts/*.sh
 
@@ -57,9 +72,13 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:bookworm
     steps:
-      - name: Install perl, wget, and Node.js
-        run: apt-get update -qq && apt-get install -y -qq perl wget nodejs git ca-certificates
-      - uses: actions/checkout@v4
+      - name: Install Node.js, perl, and wget
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq curl ca-certificates gnupg perl wget
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
       - name: Fetch checkpatch.pl
         run: |
           mkdir -p /tmp/checkpatch
@@ -84,12 +103,14 @@ jobs:
       matrix:
         release: [bookworm, trixie]
     steps:
-      - name: Install kernel build dependencies
+      - name: Install Node.js and kernel build dependencies
         run: |
           apt-get update -qq
-          apt-get install -y -qq build-essential bc flex bison libssl-dev libelf-dev sparse \
-            nodejs git ca-certificates linux-headers-$(dpkg --print-architecture)
-      - uses: actions/checkout@v4
+          apt-get install -y -qq curl ca-certificates gnupg build-essential bc flex bison libssl-dev libelf-dev sparse \
+            linux-headers-$(dpkg --print-architecture)
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
       - name: Locate installed kernel headers
         id: kdir
         run: |
@@ -121,12 +142,14 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:bookworm
     steps:
-      - name: Install build and dkms dependencies
+      - name: Install Node.js, build, and dkms dependencies
         run: |
           apt-get update -qq
-          apt-get install -y -qq dkms build-essential bc flex bison libssl-dev libelf-dev \
-            nodejs git ca-certificates linux-headers-$(dpkg --print-architecture)
-      - uses: actions/checkout@v4
+          apt-get install -y -qq curl ca-certificates gnupg dkms build-essential bc flex bison libssl-dev libelf-dev \
+            linux-headers-$(dpkg --print-architecture)
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
       - name: Build source .deb
         run: |
           mkdir -p out
@@ -142,7 +165,7 @@ jobs:
         run: |
           dpkg -r sinput-dkms
           ! dkms status | grep -q "^sinput/"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: sinput-dkms-source-deb
           path: out/*.deb
@@ -164,12 +187,13 @@ jobs:
     runs-on: ubuntu-24.04-arm
     container: debian:trixie
     steps:
-      - name: Install build tools
+      - name: Install Node.js and build tools
         run: |
           apt-get update -qq
-          apt-get install -y -qq curl build-essential bc flex bison libssl-dev libelf-dev \
-            nodejs git ca-certificates
-      - uses: actions/checkout@v4
+          apt-get install -y -qq curl ca-certificates gnupg build-essential bc flex bison libssl-dev libelf-dev
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
       - name: Trust the Raspberry Pi apt archive
         run: |
           curl -fsSL \
@@ -187,7 +211,7 @@ jobs:
           echo "Building against: $kdir"
           mkdir -p out
           ./scripts/build-binary-deb.sh "$kdir" out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: sinput-rpi3-arm64-deb
           path: out/*.deb
