@@ -17,10 +17,13 @@ on:
 # the branch push that comes with it already triggers the full CI
 # workflow independently, so this one only needs to build and publish.
 #
-# Unverified against a real GitHub release: no credentials available to
-# test create-release/upload-asset against a live repo from here -- the
-# REST API calls below follow GitHub's documented API shape, but the
-# first real tag push is what actually confirms this end to end.
+# The v0.1.0 tag push surfaced the dubious-ownership issue fixed above --
+# it failed before ever reaching the create-release/upload-asset step,
+# so that part is still unconfirmed against a real run (its request
+# shape was checked separately, with a deliberately bad token, from
+# outside CI). No amount of local `act` testing caught the ownership
+# issue, since act doesn't reproduce GitHub-hosted runners' actual
+# container UID setup.
 permissions:
   contents: write
 
@@ -38,6 +41,14 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
+      - name: Trust the checked-out workspace
+        # Without this, raw `git` commands in later steps (not actions/checkout
+        # itself, which handles this internally) fail with "detected dubious
+        # ownership in repository" -- the checkout is owned by a different
+        # UID than the one running subsequent run: steps in this container.
+        # Hit this for real on the first actual release; fixed by explicitly
+        # trusting the workspace rather than guessing at a container UID fix.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Verify dkms.conf version matches the tag
         run: |
           tag="${GITHUB_REF_NAME}"

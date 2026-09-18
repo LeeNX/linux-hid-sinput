@@ -10,15 +10,27 @@ on:
 # same push that creates the tag also pushes the branch commit, which
 # triggers .gitea/workflows/ci.yml's full check suite independently, so
 # this workflow doesn't need to re-verify the build -- it only needs to
-# build the two release artifacts and publish them.
+# build the two release artifacts.
 #
-# Needs a Gitea access token with repo read/write scope as a secret
-# named RELEASE_TOKEN (the same PAT already created for RENOVATE_TOKEN
-# works fine here too, if you'd rather not manage a second one).
-# Unverified against a real Gitea release: no credentials available to
-# test create-release/upload-asset against a live instance from here --
-# the REST API calls below follow Gitea's documented API shape, but the
-# first real tag push is what actually confirms this end to end.
+# This does NOT create a Gitea Release automatically (unlike the GitHub
+# file, which does). The v0.1.0 tag push hit a real, infra-specific
+# problem: the job container can reach the public internet fine (it
+# installs the Raspberry Pi apt archive over HTTPS a few steps below)
+# but cannot resolve/reach gitea.h.leenx.nz itself --
+#   curl: (7) Failed to connect to gitea.h.leenx.nz port 443 ... Could
+#   not connect to server
+# -- almost certainly because that hostname only resolves via internal
+# LAN DNS, which the job container's network namespace doesn't have
+# access to even though it can reach the wider internet. That's a
+# runner/container-network configuration question on the host running
+# act_runner, not something fixable from workflow YAML alone.
+#
+# So instead: build both .deb files and upload them as a normal
+# workflow artifact (downloadable from the Actions run), along with the
+# generated release notes. Pick the release from the already-pushed tag
+# in the Gitea web UI and attach the downloaded files by hand. If the
+# container network gets fixed later, this can go back to calling the
+# release/asset API the way .github/workflows/release.yml does.
 jobs:
   release:
     runs-on: arm64
@@ -27,7 +39,7 @@ jobs:
       - name: Install Node.js and build tools
         run: |
           apt-get update -qq
-          apt-get install -y -qq curl ca-certificates gnupg jq build-essential bc flex bison libssl-dev libelf-dev
+          apt-get install -y -qq curl ca-certificates gnupg build-essential bc flex bison libssl-dev libelf-dev
           curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
           apt-get install -y -qq nodejs git
       - uses: actions/checkout@v7.0.1
@@ -65,29 +77,11 @@ jobs:
         run: |
           prev_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
           if [ -n "$prev_tag" ]; then
-            git log --pretty=format:'* %s (%h)' "${prev_tag}..HEAD" > /tmp/notes.md
+            git log --pretty=format:'* %s (%h)' "${prev_tag}..HEAD" > out/release-notes.md
           else
-            git log --pretty=format:'* %s (%h)' HEAD > /tmp/notes.md
+            git log --pretty=format:'* %s (%h)' HEAD > out/release-notes.md
           fi
-      - name: Create Gitea release and upload assets
-        env:
-          GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          GITEA_API: https://gitea.h.leenx.nz/api/v1
-          REPO: leenx-foss/linux-hid-sinput
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          prerelease=false
-          case "$tag" in *-*) prerelease=true ;; esac
-
-          body=$(jq -Rs . < /tmp/notes.md)
-          release_id=$(curl -fsSL -X POST "$GITEA_API/repos/$REPO/releases" \
-            -H "Authorization: token $GITEA_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"tag_name\": \"$tag\", \"name\": \"$tag\", \"body\": $body, \"prerelease\": $prerelease}" \
-            | jq -r .id)
-
-          for f in out/*.deb; do
-            curl -fsSL -X POST "$GITEA_API/repos/$REPO/releases/$release_id/assets?name=$(basename "$f")" \
-              -H "Authorization: token $GITEA_TOKEN" \
-              -F "attachment=@$f"
-          done
+      - uses: actions/upload-artifact@v3.2.2
+        with:
+          name: release-${{ github.ref_name }}
+          path: out/*

@@ -232,7 +232,11 @@ evtest
 See [`RELEASE.md`](RELEASE.md). Short version: `scripts/release.sh 0.1.0`
 bumps `dkms.conf`, commits, and tags locally; pushing the tag triggers
 `.gitea/workflows/release.yml` and `.github/workflows/release.yml` to build
-both `.deb` flavors and attach them to a Release on each platform.
+both `.deb` flavors. GitHub attaches them to a Release automatically; Gitea
+uploads them as a downloadable artifact for now (a container-network DNS
+issue on that runner blocks it from reaching its own release API — see
+`RELEASE.md`), so creating the actual Gitea Release from the pushed tag is
+currently a manual step.
 
 ## Safety during development
 
