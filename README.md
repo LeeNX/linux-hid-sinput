@@ -129,8 +129,21 @@ current Debian (verified against 3.0.10); the doc is stale.
 
 ## CI
 
-`.gitea/workflows/ci.yml` runs on every push/PR (and can be triggered
-manually) and covers everything that is possible without real hardware:
+Three separate CI configs, one per platform this repo can be pushed to —
+`.gitea/workflows/ci.yml`, `.github/workflows/ci.yml`, `.gitlab-ci.yml` —
+rather than one shared file. They run the same six checks below via the
+same underlying scripts, but the platform-specific plumbing genuinely
+differs (see each file's header comment for specifics): action versions
+that work on one platform and not another, how JavaScript actions get a
+`node` binary inside a job's container (or, on GitLab, don't need one at
+all — checkout and artifacts are native runner features there, not
+actions), and runner/architecture labels. All three were dry-run locally
+against real container images before being committed (`act` for the
+GitHub file, manual container replay for GitLab since `gitlab-runner
+exec` has been removed from current versions); only a real push confirms
+each platform's actual runners/registries behave the same way.
+
+Every push/PR (and manual trigger) runs:
 
 * `protocol-check` — `make check` (the decode test above)
 * `shellcheck` — lints `scripts/*.sh`
@@ -150,7 +163,15 @@ manually) and covers everything that is possible without real hardware:
   wrong build-output location) — worth keeping as a regression test rather
   than trimming down to "just build the module" again.
 * `rpi3-binary-deb` — builds the binary `.deb` for a Raspberry Pi 3 (see
-  `docs/rpi-hil.md`) and uploads it as a downloadable CI artifact.
+  `docs/rpi-hil.md`) and uploads it as a downloadable CI artifact. Needs an
+  arm64 runner (`linux-headers-rpi-v8` isn't published for amd64): pinned to
+  the `arm64` label on Gitea (already registered on the RPi4/5 runner) and
+  `ubuntu-24.04-arm` on GitHub (free hosted arm64 runner for public repos,
+  unverified as of writing). The GitLab file's `tags: [saas-linux-small-arm64]`
+  is a guess at GitLab.com's shared arm64 runner tag — check
+  <https://docs.gitlab.com/ci/runners/hosted_runners/linux/> for the current
+  name/tier before relying on it, or point it at a self-hosted arm64 runner
+  instead (the same RPi4/5 box could double as one).
 
 To reproduce the kernel-build job locally without Docker/Gitea, install
 `linux-headers-$(dpkg --print-architecture)` in a matching container and run

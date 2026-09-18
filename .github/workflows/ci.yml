@@ -1,0 +1,193 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# This mirrors .gitea/workflows/ci.yml (same jobs, same underlying
+# scripts/commands) but is NOT the same file: GitHub-hosted runners and
+# a self-hosted Gitea act_runner behave differently enough that a single
+# shared workflow isn't a good fit. Differences intentionally kept here:
+#
+# - actions/upload-artifact is @v4 here (GitHub's current, actively
+#   maintained version) vs @v3 on Gitea, where v4's newer "Results" API
+#   backend isn't supported by that instance.
+# - rpi3-binary-deb runs on `ubuntu-24.04-arm`, GitHub's hosted Linux
+#   ARM64 runner (free for public repos). Unverified against a real
+#   GitHub Actions run as of writing -- adjust the label if GitHub has
+#   renamed/regated it by the time this runs.
+# - The `nodejs`-before-checkout step is probably unnecessary here:
+#   GitHub's own hosted runner is documented to inject its bundled
+#   Node.js into any job `container:` automatically, unlike Gitea's
+#   act_runner. Kept anyway since it's cheap and harmless, and keeps
+#   this file structurally close to the Gitea one for easier diffing.
+
+jobs:
+  # Host-side protocol byte-offset/flag decode test. No kernel headers
+  # needed, so this is the fast/cheap check that runs first.
+  protocol-check:
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    steps:
+      - name: Install build tools
+        run: apt-get update -qq && apt-get install -y -qq build-essential nodejs git ca-certificates
+      - uses: actions/checkout@v4
+      - name: make check
+        run: make check
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    container: koalaman/shellcheck-alpine:stable
+    steps:
+      - name: Install Node.js (defensive; see file header)
+        run: apk add --no-cache nodejs git ca-certificates
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck scripts/*.sh
+
+  # Linux kernel style checker. LINUX_VERSION_CODE/CONSTANT_COMPARISON are
+  # ignored: checkpatch expects in-tree code that targets one kernel
+  # version, but this is an out-of-tree DKMS driver that has to compile
+  # against a range of kernel versions, so the LINUX_VERSION_CODE guard in
+  # src/sinput.c is intentional. tests/ is host-side code, not kernel
+  # code, so it is not checked here.
+  checkpatch:
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    steps:
+      - name: Install perl, wget, and Node.js
+        run: apt-get update -qq && apt-get install -y -qq perl wget nodejs git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Fetch checkpatch.pl
+        run: |
+          mkdir -p /tmp/checkpatch
+          wget -q -O /tmp/checkpatch/checkpatch.pl https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl
+          wget -q -O /tmp/checkpatch/spelling.txt https://raw.githubusercontent.com/torvalds/linux/master/scripts/spelling.txt
+          wget -q -O /tmp/checkpatch/const_structs.checkpatch https://raw.githubusercontent.com/torvalds/linux/master/scripts/const_structs.checkpatch
+      - name: checkpatch
+        run: |
+          perl /tmp/checkpatch/checkpatch.pl --no-tree --no-signoff \
+            --ignore=LINUX_VERSION_CODE,CONSTANT_COMPARISON \
+            --file src/sinput.c src/sinput_protocol.h
+
+  # Compile the module against real kernel headers for a couple of
+  # released kernel versions. This is a compile check only: it catches
+  # build breaks, not runtime/behavioural bugs, since no SInput hardware
+  # is available in CI.
+  kernel-build:
+    runs-on: ubuntu-latest
+    container: debian:${{ matrix.release }}
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [bookworm, trixie]
+    steps:
+      - name: Install kernel build dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq build-essential bc flex bison libssl-dev libelf-dev sparse \
+            nodejs git ca-certificates linux-headers-$(dpkg --print-architecture)
+      - uses: actions/checkout@v4
+      - name: Locate installed kernel headers
+        id: kdir
+        run: |
+          kver=$(ls /lib/modules)
+          echo "kdir=/lib/modules/${kver}/build" >> "$GITHUB_OUTPUT"
+      - name: Build module
+        run: make KDIR=${{ steps.kdir.outputs.kdir }}
+      - name: Extra compiler warnings (W=1)
+        run: |
+          make KDIR=${{ steps.kdir.outputs.kdir }} clean
+          make KDIR=${{ steps.kdir.outputs.kdir }} W=1
+      - name: Sparse static analysis
+        run: |
+          make KDIR=${{ steps.kdir.outputs.kdir }} clean
+          make KDIR=${{ steps.kdir.outputs.kdir }} C=2 CF="-D__CHECK_ENDIAN__"
+
+  # Source DKMS .deb: ships source + dkms.conf under /usr/src and a
+  # postinst that builds/installs via dkms itself. This is a genuine
+  # regression test, not just an artifact build -- it does a real
+  # `dpkg -i` (which drives dkms add/build/install) and `dpkg -r` (which
+  # drives dkms remove).
+  #
+  # The symlink step below only exists to make a container's reported
+  # `uname -r` match the generic kernel headers package installed here,
+  # so dkms's own default kernel-targeting logic has something to find.
+  # A real target machine needs no such trick: it's already running the
+  # kernel its own headers match.
+  dkms-source-deb:
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    steps:
+      - name: Install build and dkms dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq dkms build-essential bc flex bison libssl-dev libelf-dev \
+            nodejs git ca-certificates linux-headers-$(dpkg --print-architecture)
+      - uses: actions/checkout@v4
+      - name: Build source .deb
+        run: |
+          mkdir -p out
+          ./scripts/build-source-deb.sh out
+      - name: Install via dpkg (exercises dkms add/build/install for real)
+        run: |
+          kver=$(ls /lib/modules)
+          ln -sfn "/lib/modules/${kver}" "/lib/modules/$(uname -r)" 2>/dev/null || true
+          dpkg -i out/*.deb
+          test -e "/lib/modules/${kver}/updates/dkms/sinput.ko"
+          dkms status | grep -q "sinput/0.1.0.*installed"
+      - name: Remove via dpkg (exercises dkms remove for real)
+        run: |
+          dpkg -r sinput-dkms
+          ! dkms status | grep -q "^sinput/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sinput-dkms-source-deb
+          path: out/*.deb
+
+  # Precompiled binary .deb for a real Raspberry Pi 3 running 64-bit
+  # Raspberry Pi OS (trixie). Unlike kernel-build above, this targets
+  # Raspberry Pi's own kernel headers (rpi-v8 variant, shared by RPi3 and
+  # RPi4, NOT RPi5's rpi-2712 variant) rather than generic Debian ones,
+  # since the module's vermagic must match the real device's exact
+  # kernel build. See docs/rpi-hil.md for why this is more involved than
+  # a normal apt-get install, the bookworm-vs-trixie difference, and how
+  # to pin an exact kernel version instead of always tracking "current".
+  #
+  # ubuntu-24.04-arm is GitHub's hosted Linux ARM64 runner label (free
+  # for public repos as of writing). linux-headers-rpi-v8 only exists
+  # for arm64 -- Raspberry Pi doesn't publish it for amd64 -- so this
+  # has to land on an arm64 host regardless of which platform runs it.
+  rpi3-binary-deb:
+    runs-on: ubuntu-24.04-arm
+    container: debian:trixie
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq curl build-essential bc flex bison libssl-dev libelf-dev \
+            nodejs git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Trust the Raspberry Pi apt archive
+        run: |
+          curl -fsSL \
+            https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb \
+            -o /tmp/keyring.deb
+          dpkg -i /tmp/keyring.deb
+          echo 'deb http://archive.raspberrypi.com/debian/ trixie main' \
+            > /etc/apt/sources.list.d/raspi.list
+          apt-get update -qq
+      - name: Install RPi3/RPi4 (rpi-v8) kernel headers
+        run: apt-get install -y -qq linux-headers-rpi-v8
+      - name: Build binary .deb
+        run: |
+          kdir=$(ls -d /lib/modules/*/build | head -1)
+          echo "Building against: $kdir"
+          mkdir -p out
+          ./scripts/build-binary-deb.sh "$kdir" out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sinput-rpi3-arm64-deb
+          path: out/*.deb
