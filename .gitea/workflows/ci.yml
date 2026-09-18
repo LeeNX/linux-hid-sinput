@@ -161,11 +161,12 @@ jobs:
   # a normal apt-get install, the bookworm-vs-trixie difference, and how
   # to pin an exact kernel version instead of always tracking "current".
   #
-  # This can run on an arm64 Gitea runner (e.g. hosted on an RPi4/5)
-  # natively, or on any arm64 runner -- it only needs to match the
+  # Pinned to the arm64 runner label: linux-headers-rpi-v8 only exists for
+  # arm64 (Raspberry Pi doesn't publish it for amd64), so this needs to
+  # land on an arm64 host specifically -- it only needs to match the
   # *target* RPi3's architecture, not the runner's own kernel.
   rpi3-binary-deb:
-    runs-on: ubuntu-latest
+    runs-on: arm64
     container: debian:trixie
     steps:
       - name: Install build tools
