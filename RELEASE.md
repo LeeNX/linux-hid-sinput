@@ -108,7 +108,7 @@ that commit separately.
 
 ## What went wrong on the first real release, and what's still unverified
 
-Cutting `v0.1.0` took three attempts against real tag pushes to get past —
+Cutting `v0.1.0` took four attempts against real tag pushes to get past —
 each round surfaced something neither `act` nor standalone request checks
 had caught:
 
@@ -140,14 +140,31 @@ had caught:
   `$body`'s own construction earlier in the same step was never affected
   by this, since it's built via command substitution (`$(jq -Rs . < ...)`),
   which captures a command's stdout verbatim with no echo involved.
+* **GitHub, round 3**: with round 2 fixed, the create-release call itself
+  failed with `curl: (22) The requested URL returned error: 422` —
+  because round 2's create-release call had actually succeeded (that
+  attempt failed on parsing the response, not on creating the release),
+  a real Release for `v0.1.0` already existed with 0 assets attached,
+  and POSTing a second release with the same `tag_name` is a hard error
+  on GitHub's side. Confirmed by fetching
+  `GET /repos/{owner}/{repo}/releases/tags/v0.1.0` directly and finding
+  the leftover release from round 2. Fixed by making the step
+  idempotent: check for an existing release by tag first and reuse it
+  (its `upload_url`) if found, only POST to create one otherwise. This
+  isn't just a fix for this one debugging session -- any real run that
+  fails between creating the release and finishing the asset uploads
+  (a network blip, a GitHub outage) would hit the exact same 422 on
+  retry without this.
 
-All three fixes were re-verified before being committed — the Gitea and
-GitHub-round-2 fixes empirically (a real container run for Gitea's build
-steps, and an exact reproduction of the round-2 error message and its fix
-for GitHub), the round-1 fix with `act`, though `act` couldn't have caught
-that bug in the first place since it doesn't reproduce GitHub-hosted
-runners' container UID handling — so that fix's real confirmation was
-necessarily the next real tag push, same as round 2.
+All four fixes were re-verified before being committed. The idempotency
+fix for round 3 got an unexpectedly strong local check: `act`'s GET
+request against the real (unauthenticated-friendly, since the repo is
+public) `releases/tags/v0.1.0` endpoint found and reused the actual
+leftover release from round 2, confirming the logic against real GitHub
+state rather than just a synthetic response. The round-1 (dubious
+ownership) fix couldn't be verified this way -- `act` doesn't reproduce
+GitHub-hosted runners' container UID handling at all, so that fix's real
+confirmation was necessarily a live tag push.
 
 `scripts/release.sh` itself was tested more thoroughly before ever running
 for real, against a scratch clone: dry-run, a real bump/commit/tag,

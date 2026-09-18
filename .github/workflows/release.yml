@@ -96,10 +96,25 @@ jobs:
           case "$tag" in *-*) prerelease=true ;; esac
 
           body=$(jq -Rs . < /tmp/notes.md)
-          response=$(curl -fsSL -X POST "$GITHUB_API/repos/$REPO/releases" \
+
+          # Idempotent: if a release for this tag already exists (e.g. a
+          # previous run got this far but failed before finishing asset
+          # uploads -- which is exactly what happened here once already),
+          # reuse it instead of failing on GitHub's 422 "already exists"
+          # for a second POST with the same tag_name.
+          existing=$(curl -fsSL "$GITHUB_API/repos/$REPO/releases/tags/$tag" \
             -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -d "{\"tag_name\": \"$tag\", \"name\": \"$tag\", \"body\": $body, \"prerelease\": $prerelease}")
+            -H "Accept: application/vnd.github+json" 2>/dev/null || true)
+
+          if [ -n "$existing" ] && printf '%s' "$existing" | jq -e '.id' >/dev/null 2>&1; then
+            echo "Release $tag already exists, reusing it."
+            response="$existing"
+          else
+            response=$(curl -fsSL -X POST "$GITHUB_API/repos/$REPO/releases" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -d "{\"tag_name\": \"$tag\", \"name\": \"$tag\", \"body\": $body, \"prerelease\": $prerelease}")
+          fi
           # printf, not echo: this step's shell interprets backslash escapes
           # in echo's argument by default (dash-style), which would silently
           # turn the literal \n sequences inside the response body's JSON
