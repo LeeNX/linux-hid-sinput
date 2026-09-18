@@ -18,7 +18,7 @@ hardware. The planned test target is a DIY SInput-compatible controller built
 on [lemmingDev/ESP32-BLE-Gamepad](https://github.com/lemmingDev/ESP32-BLE-Gamepad),
 with hardware-in-the-loop testing tracked in
 [LeeNX/ESP32-BLE-Gamepad-HIL](https://github.com/LeeNX/ESP32-BLE-Gamepad-HIL)
-against a Raspberry Pi 3 — see `docs/rpi-hil.md` for the Pi-side story.
+against a Raspberry Pi 3 — see [`docs/rpi-hil.md`](docs/rpi-hil.md) for the Pi-side story.
 
 ## Research snapshot
 
@@ -38,7 +38,7 @@ As of 2026-09-16:
 * DKMS is useful here as the experimental delivery mechanism while the protocol
   and Linux-facing API are being worked out.
 
-See `docs/research.md` for sources and design notes.
+See [`docs/research.md`](docs/research.md) for sources and design notes.
 
 ## Current prototype
 
@@ -60,7 +60,7 @@ The module:
 
 Rumble, player LEDs, RGB LEDs, touchpads, and a proper `power_supply` class
 device are intentionally left as follow-up work. The feature-response layout
-is reverse-derived from SDL's SInput HIDAPI driver (see `docs/research.md`),
+is reverse-derived from SDL's SInput HIDAPI driver (see [`docs/research.md`](docs/research.md)),
 not from a stable spec, so treat the byte offsets as best-effort.
 
 ## Why a kernel driver?
@@ -102,17 +102,17 @@ make check
 ```
 
 This only exercises the report byte-offset/flag math in
-`src/sinput_protocol.h` against synthetic packets; it is not a substitute for
+[`src/sinput_protocol.h`](src/sinput_protocol.h) against synthetic packets; it is not a substitute for
 testing against real hardware.
 
-Install through DKMS directly (builds against whatever kernel is currently
-running):
+Install through DKMS directly ([`scripts/dkms-install.sh`](scripts/dkms-install.sh);
+builds against whatever kernel is currently running):
 
 ```sh
 sudo ./scripts/dkms-install.sh
 ```
 
-Remove:
+Remove ([`scripts/dkms-remove.sh`](scripts/dkms-remove.sh)):
 
 ```sh
 sudo ./scripts/dkms-remove.sh
@@ -120,16 +120,16 @@ sudo ./scripts/dkms-remove.sh
 
 ### Packaging: two `.deb` flavors
 
-* **Source DKMS `.deb`** — `./scripts/build-source-deb.sh [output-dir]`. Ships
+* **Source DKMS `.deb`** — [`./scripts/build-source-deb.sh`](scripts/build-source-deb.sh) `[output-dir]`. Ships
   the source under `/usr/src/sinput-<version>/`; its `postinst` hands off to
   dkms's own `/usr/lib/dkms/common.postinst` to build and install for
   whatever kernel(s) are present, and keeps working across kernel upgrades.
   Needs `build-essential` and matching kernel headers on the *target*, not
   the build machine.
-* **Precompiled binary `.deb`** — `./scripts/build-binary-deb.sh <KDIR>
+* **Precompiled binary `.deb`** — [`./scripts/build-binary-deb.sh`](scripts/build-binary-deb.sh) `<KDIR>
   [output-dir]`. Ships a prebuilt `sinput.ko` for one exact kernel release; no
   compiler needed on the target at all, but it will not load on any other
-  kernel build (vermagic mismatch). See `docs/rpi-hil.md` for how to do this
+  kernel build (vermagic mismatch). See [`docs/rpi-hil.md`](docs/rpi-hil.md) for how to do this
   for a Raspberry Pi 3 target, including two real gotchas it took actually
   testing in containers to find (Raspberry Pi's kernel-headers packaging
   differs completely between OS releases, and a real apt-trust bootstrap
@@ -143,7 +143,7 @@ current Debian (verified against 3.0.10); the doc is stale.
 ## CI
 
 Three separate CI configs, one per platform this repo can be pushed to —
-`.gitea/workflows/ci.yml`, `.github/workflows/ci.yml`, `.gitlab-ci.yml` —
+[`.gitea/workflows/ci.yml`](.gitea/workflows/ci.yml), [`.github/workflows/ci.yml`](.github/workflows/ci.yml), [`.gitlab-ci.yml`](.gitlab-ci.yml) —
 rather than one shared file. They run the same six checks below via the
 same underlying scripts, but the platform-specific plumbing genuinely
 differs (see each file's header comment for specifics): action versions
@@ -160,7 +160,7 @@ Every push/PR (and manual trigger) runs:
 
 * `protocol-check` — `make check` (the decode test above)
 * `shellcheck` — lints `scripts/*.sh`
-* `checkpatch` — Linux kernel style check against `src/`. `LINUX_VERSION_CODE`
+* `checkpatch` — Linux kernel style check against [`src/`](src/). `LINUX_VERSION_CODE`
   and `CONSTANT_COMPARISON` are ignored: those checkpatch rules assume in-tree
   code that targets a single kernel version, but this driver is out-of-tree
   and has to compile across a range of kernel versions.
@@ -171,12 +171,12 @@ Every push/PR (and manual trigger) runs:
 * `dkms-source-deb` — builds the source `.deb` above and actually
   `dpkg -i`/`dpkg -r`s it, i.e. runs the real dkms add/build/install/remove
   path, not just a compile. This caught two real bugs during development
-  that every other check above missed (`dkms.conf`'s `MAKE` line ignoring
+  that every other check above missed ([`dkms.conf`](dkms.conf)'s `MAKE` line ignoring
   the kernel dkms was actually targeting, and the module landing in the
   wrong build-output location) — worth keeping as a regression test rather
   than trimming down to "just build the module" again.
 * `rpi3-binary-deb` — builds the binary `.deb` for a Raspberry Pi 3 (see
-  `docs/rpi-hil.md`) and uploads it as a downloadable CI artifact. Needs an
+  [`docs/rpi-hil.md`](docs/rpi-hil.md)) and uploads it as a downloadable CI artifact. Needs an
   arm64 runner (`linux-headers-rpi-v8` isn't published for amd64): pinned to
   the `arm64` label on Gitea (already registered on the RPi4/5 runner) and
   `ubuntu-24.04-arm` on GitHub (free hosted arm64 runner for public repos,
@@ -192,11 +192,11 @@ To reproduce the kernel-build job locally without Docker/Gitea, install
 
 ### Keeping CI dependencies current
 
-* **GitHub**: `.github/dependabot.yml` watches `.github/workflows/*.yml` for
+* **GitHub**: [`.github/dependabot.yml`](.github/dependabot.yml) watches `.github/workflows/*.yml` for
   new `actions/*` releases and opens PRs weekly.
-* **Gitea**: `.gitea/workflows/renovate.yml` runs [Renovate](https://docs.renovatebot.com/)
+* **Gitea**: [`.gitea/workflows/renovate.yml`](.gitea/workflows/renovate.yml) runs [Renovate](https://docs.renovatebot.com/)
   itself weekly (self-hosted platforms don't get a hosted Dependabot/Renovate
-  app), configured by `renovate.json` at the repo root. Needs two one-time
+  app), configured by [`renovate.json`](renovate.json) at the repo root. Needs two one-time
   manual steps: create a Gitea access token (a dedicated bot account keeps PR
   attribution clean) with repo read/write scope as a `RENOVATE_TOKEN` secret,
   **and** a read-only github.com personal access token as
@@ -207,10 +207,10 @@ To reproduce the kernel-build job locally without Docker/Gitea, install
   (`skipReason: github-token-required`) no matter which platform it's
   opening PRs against. Until both secrets exist, the job runs and
   fails/no-ops at the relevant step rather than silently doing nothing.
-  `renovate.json` also carries the one rule that has to stay
+  [`renovate.json`](renovate.json) also carries the one rule that has to stay
   platform-specific: it caps `actions/upload-artifact` below v4 in
-  `.gitea/workflows/ci.yml` only (the Results-API backend issue above),
-  while leaving `.github/workflows/ci.yml` free to track latest.
+  [`.gitea/workflows/ci.yml`](.gitea/workflows/ci.yml) only (the Results-API backend issue above),
+  while leaving [`.github/workflows/ci.yml`](.github/workflows/ci.yml) free to track latest.
 
 Inspect:
 
@@ -243,11 +243,11 @@ feature set as evidence that SInput is ready for upstream Linux.
 * [x] capability-driven axis + IMU registration (sticks, triggers, accel, gyro)
 * [x] protocol version / polling-rate logging
 * [x] host-side protocol decode test (`make check`)
-* [x] source DKMS `.deb` packaging (`scripts/build-source-deb.sh`), with a
+* [x] source DKMS `.deb` packaging ([`scripts/build-source-deb.sh`](scripts/build-source-deb.sh)), with a
       real dpkg-i/dpkg-r regression test in CI
 * [x] precompiled binary `.deb` packaging for one exact kernel build
-      (`scripts/build-binary-deb.sh`), verified for Raspberry Pi 3 (see
-      `docs/rpi-hil.md`)
+      ([`scripts/build-binary-deb.sh`](scripts/build-binary-deb.sh)), verified for Raspberry Pi 3 (see
+      [`docs/rpi-hil.md`](docs/rpi-hil.md))
 * [ ] capability-driven *button* mapping (buttons are still always registered)
 * [ ] battery / `power_supply`
 * [ ] force feedback / rumble output command

@@ -236,4 +236,4 @@ lemmingDev's ESP32-BLE-Gamepad firmware
 (https://github.com/lemmingDev/ESP32-BLE-Gamepad), with hardware-in-the-loop
 testing tracked separately in
 https://github.com/LeeNX/ESP32-BLE-Gamepad-HIL against a Raspberry Pi 3 (see
-`docs/rpi-hil.md` for the Pi-side packaging/build story).
+[`rpi-hil.md`](rpi-hil.md) for the Pi-side packaging/build story).

@@ -1,12 +1,12 @@
 # Raspberry Pi HIL: precompiled binary `.deb`
 
-This documents how `scripts/build-binary-deb.sh` produces a precompiled
+This documents how [`scripts/build-binary-deb.sh`](../scripts/build-binary-deb.sh) produces a precompiled
 `sinput.ko` `.deb` for a Raspberry Pi 3 running 64-bit Raspberry Pi OS,
 built in a container (including on a Gitea Actions runner hosted on an
 RPi4/5), with no compiler needed on the target Pi.
 
 This is the "binary" install path. It complements, rather than replaces,
-the DKMS source path (`scripts/dkms-install.sh`): DKMS rebuilds
+the DKMS source path ([`scripts/dkms-install.sh`](../scripts/dkms-install.sh)): DKMS rebuilds
 automatically whenever the Pi's kernel is upgraded, at the cost of needing
 `build-essential` + kernel headers on the Pi. A precompiled binary `.deb`
 needs nothing but `dpkg -i` on the Pi, at the cost of being tied to one
@@ -109,7 +109,7 @@ assuming it still matches.
 ## Building the `.deb`
 
 Once the correct kernel headers package is installed and the repo is
-trusted, `scripts/build-binary-deb.sh` does the rest — it doesn't know or
+trusted, [`scripts/build-binary-deb.sh`](../scripts/build-binary-deb.sh) does the rest — it doesn't know or
 care about Raspberry Pi specifically, it just needs a `KDIR` pointing at
 already-installed headers:
 
@@ -152,7 +152,7 @@ installed kernel's module list.
 
 ## Reproducing the CI job locally
 
-See the `rpi3-binary-deb` job in `.gitea/workflows/ci.yml` for the exact
+See the `rpi3-binary-deb` job in [`.gitea/workflows/ci.yml`](../.gitea/workflows/ci.yml) for the exact
 commands run in CI. It targets trixie's `linux-headers-rpi-v8`
 meta-package (i.e. "whatever trixie currently considers current"). To
 pin an exact historical version instead — recommended once you have a

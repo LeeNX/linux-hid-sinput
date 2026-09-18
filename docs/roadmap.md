@@ -43,7 +43,7 @@
 - [x] real dkms add/build/install/remove regression test in CI
       (`dkms-source-deb` job; caught two real bugs no other check did)
 - [x] precompiled binary `.deb` for a real Raspberry Pi 3 target
-      (`rpi3-binary-deb` job + `docs/rpi-hil.md`) -- built and inspected in
+      (`rpi3-binary-deb` job + [`rpi-hil.md`](rpi-hil.md)) -- built and inspected in
       CI, not yet installed on physical RPi3 hardware
 
 ## 0.6 - upstream assessment
