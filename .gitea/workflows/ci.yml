@@ -13,12 +13,17 @@ on:
 # only has network access to this Gitea instance.
 #
 # Every job below installs `nodejs` (plus `git`/`ca-certificates`) as its
-# very first step, before actions/checkout. actions/checkout@v4 and
-# actions/upload-artifact@v4 are JavaScript actions: act_runner execs
-# `node` directly inside whatever `container:` the job specifies, and a
-# plain debian/alpine base image has no Node.js at all, which fails with
+# very first step, before actions/checkout. actions/checkout and
+# actions/upload-artifact are JavaScript actions: act_runner execs `node`
+# directly inside whatever `container:` the job specifies, and a plain
+# debian/alpine base image has no Node.js at all, which fails with
 # "executable file `node` not found in $PATH" before any of our own
 # steps even run.
+#
+# upload-artifact is pinned to @v3, not @v4: v4 switched to GitHub's
+# newer "Results" API backend, which this Gitea instance doesn't speak
+# (upload fails with ECONNREFUSED). v3 uses the older, much more widely
+# supported artifact-upload protocol.
 
 jobs:
   # Host-side protocol byte-offset/flag decode test. No kernel headers
@@ -142,7 +147,7 @@ jobs:
         run: |
           dpkg -r sinput-dkms
           ! dkms status | grep -q "^sinput/"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v3
         with:
           name: sinput-dkms-source-deb
           path: out/*.deb
@@ -186,7 +191,7 @@ jobs:
           echo "Building against: $kdir"
           mkdir -p out
           ./scripts/build-binary-deb.sh "$kdir" out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v3
         with:
           name: sinput-rpi3-arm64-deb
           path: out/*.deb
