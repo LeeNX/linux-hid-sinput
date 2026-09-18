@@ -92,6 +92,51 @@ jobs:
           make KDIR=${{ steps.kdir.outputs.kdir }} clean
           make KDIR=${{ steps.kdir.outputs.kdir }} C=2 CF="-D__CHECK_ENDIAN__"
 
+  # Source DKMS .deb: ships source + dkms.conf under /usr/src and a
+  # postinst that builds/installs via dkms itself. This is a genuine
+  # regression test, not just an artifact build -- it does a real
+  # `dpkg -i` (which drives dkms add/build/install) and `dpkg -r` (which
+  # drives dkms remove). This is exactly the path that silently broke
+  # twice during development (dkms.conf's MAKE line ignoring the kernel
+  # dkms was actually targeting, and BUILT_MODULE_LOCATION not matching
+  # where the Makefile puts sinput.ko) without any of the other CI jobs
+  # noticing, since none of them exercised dkms itself.
+  #
+  # The symlink step below only exists to make a container's reported
+  # `uname -r` match the generic kernel headers package installed here,
+  # so dkms's own default kernel-targeting logic has something to find.
+  # A real target machine needs no such trick: it's already running the
+  # kernel its own headers match.
+  dkms-source-deb:
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and dkms dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq dkms build-essential bc flex bison libssl-dev libelf-dev \
+            linux-headers-$(dpkg --print-architecture)
+      - name: Build source .deb
+        run: |
+          mkdir -p out
+          ./scripts/build-source-deb.sh out
+      - name: Install via dpkg (exercises dkms add/build/install for real)
+        run: |
+          kver=$(ls /lib/modules)
+          ln -sfn "/lib/modules/${kver}" "/lib/modules/$(uname -r)" 2>/dev/null || true
+          dpkg -i out/*.deb
+          test -e "/lib/modules/${kver}/updates/dkms/sinput.ko"
+          dkms status | grep -q "sinput/0.1.0.*installed"
+      - name: Remove via dpkg (exercises dkms remove for real)
+        run: |
+          dpkg -r sinput-dkms
+          ! dkms status | grep -q "^sinput/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sinput-dkms-source-deb
+          path: out/*.deb
+
   # Precompiled binary .deb for a real Raspberry Pi 3 running 64-bit
   # Raspberry Pi OS (trixie). Unlike kernel-build above, this targets
   # Raspberry Pi's own kernel headers (rpi-v8 variant, shared by RPi3 and
