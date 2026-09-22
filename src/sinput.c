@@ -126,6 +126,8 @@ static void sinput_report_gamepad(struct sinput_device *sdev,
 	unsigned long flags;
 	u32 buttons;
 	unsigned int i;
+	u8 new_plug_status, new_capacity;
+	bool battery_changed;
 
 	/*
 	 * hid_hw_start() enables raw_event delivery before sinput_input_init()
@@ -148,11 +150,24 @@ static void sinput_report_gamepad(struct sinput_device *sdev,
 	 * don't need a "was this registered" check, just the lock that
 	 * sinput_battery_get_property() also takes.
 	 */
-	spin_lock_irqsave(&sdev->battery_lock, flags);
-	sdev->battery_plug_status = data[SI_PLUG_STATUS];
+	new_plug_status = data[SI_PLUG_STATUS];
 	/* Protocol says 0-100; clamp defensively against a malformed/buggy device. */
-	sdev->battery_capacity = min_t(u8, data[SI_CHARGE_LEVEL], 100);
+	new_capacity = min_t(u8, data[SI_CHARGE_LEVEL], 100);
+
+	spin_lock_irqsave(&sdev->battery_lock, flags);
+	battery_changed = sdev->battery_plug_status != new_plug_status ||
+			   sdev->battery_capacity != new_capacity;
+	sdev->battery_plug_status = new_plug_status;
+	sdev->battery_capacity = new_capacity;
 	spin_unlock_irqrestore(&sdev->battery_lock, flags);
+
+	/*
+	 * sdev->battery is only set once sinput_battery_init() completes; a
+	 * report can land before that (same race sdev->input above guards
+	 * against), so check it rather than assume it's ready.
+	 */
+	if (battery_changed && sdev->battery)
+		power_supply_changed(sdev->battery);
 
 	buttons = get_unaligned_le32(data + SI_BUTTONS_0);
 

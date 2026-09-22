@@ -62,8 +62,8 @@ The module:
 8. exposes battery/charge state as a standard Linux `power_supply` battery
    device (always present in every state report, no capability bit).
 
-Rumble, player LEDs, RGB LEDs, touchpads, and a proper `power_supply` class
-device are intentionally left as follow-up work. The feature-response layout
+Rumble, player LEDs, RGB LEDs, and touchpads are intentionally left as
+follow-up work. The feature-response layout
 is reverse-derived from SDL's SInput HIDAPI driver (see [`docs/research.md`](docs/research.md)),
 not from a stable spec, so treat the byte offsets as best-effort.
 
