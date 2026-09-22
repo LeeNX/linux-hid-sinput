@@ -104,7 +104,8 @@ dkms-source-deb:
     - ln -sfn "/lib/modules/${kver}" "/lib/modules/$(uname -r)" 2>/dev/null || true
     - dpkg -i out/*.deb
     - test -e "/lib/modules/${kver}/updates/dkms/sinput.ko"
-    - dkms status | grep -q "sinput/0.1.0.*installed"
+    - version="$(grep '^PACKAGE_VERSION=' dkms.conf | cut -d'"' -f2)"
+    - dkms status | grep -q "sinput/${version}.*installed"
     - dpkg -r sinput-dkms
     - '! dkms status | grep -q "^sinput/"'
   artifacts:

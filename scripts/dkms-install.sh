@@ -2,7 +2,7 @@
 set -eu
 
 NAME=sinput
-VERSION=0.1.0
+VERSION="$(grep '^PACKAGE_VERSION=' "$(dirname "$0")/../dkms.conf" | cut -d'"' -f2)"
 
 sudo dkms add "$(pwd)"
 sudo dkms build "${NAME}/${VERSION}"
