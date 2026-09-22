@@ -60,10 +60,18 @@ The module:
 7. exposes a separate IMU input device, with only the accel/gyro axes the
    device actually advertises;
 8. exposes battery/charge state as a standard Linux `power_supply` battery
-   device (always present in every state report, no capability bit).
+   device (always present in every state report, no capability bit);
+9. exposes player LEDs (4 on/off `led_classdev`s) and an RGB indicator
+   (`led_classdev_multicolor`) as output commands, gated on the feature
+   response the same way the input side is.
 
-Rumble, player LEDs, RGB LEDs, and touchpads are intentionally left as
-follow-up work. The feature-response layout
+The source lives in `src/`, one file per subsystem (`sinput_core.c` for
+probe/dispatch and the FEATURES/output-command plumbing, `sinput_input.c`,
+`sinput_battery.c`, `sinput_led.c`), Kbuild-linked into a single `sinput.ko`
+-- see `src/Makefile`.
+
+Rumble and touchpads are intentionally left as follow-up work. The
+feature-response layout
 is reverse-derived from SDL's SInput HIDAPI driver (see [`docs/research.md`](docs/research.md)),
 not from a stable spec, so treat the byte offsets as best-effort.
 
@@ -269,10 +277,14 @@ feature set as evidence that SInput is ready for upstream Linux.
 * [x] battery / `power_supply` (HIL-verified against real hardware; see
       [`docs/research.md`](docs/research.md))
 * [ ] force feedback / rumble output command
-* [ ] player LEDs
-* [ ] RGB LED
+* [x] player LEDs (HIL-verified against real hardware; see
+      [`docs/research.md`](docs/research.md))
+* [x] RGB LED (HIL-verified against real hardware; see
+      [`docs/research.md`](docs/research.md))
 * [ ] touchpads
-* [ ] output-command serialization and locking (only a single request-on-probe today)
+* [x] output-command serialization and locking (`output_lock` mutex, added
+      once player/RGB LED became the second and third output commands; see
+      [`docs/research.md`](docs/research.md))
 * [ ] USB + Bluetooth transport testing (Bluetooth binding added and verified
       against a real device over BLE; USB still untested; see
       [`docs/research.md`](docs/research.md))

@@ -338,3 +338,86 @@ opens the window for `raw_event` to reach it -- the exact same class of
 fix from earlier today, recurring in new code. Moved the lock init and
 default field values up into `sinput_probe()` alongside the `caps` defaults,
 before `hid_hw_start()`, closing the window the same way.
+
+### 2026-09-22: module split, player LED + RGB LED, HIL-verified
+
+Split `sinput.c` (~600 lines) into per-subsystem files
+(`sinput_core.c`/`sinput_input.c`/`sinput_battery.c`/`sinput_led.c` + a new
+shared `sinput.h`), matching `hid-playstation.c`/`hid-nintendo.c`'s layout,
+ahead of adding LEDs into the new structure. Pure refactor, re-verified on
+`rp4b-ble-hil` before adding anything new: driver still binds over BLE, a
+face button still decodes correctly, battery `power_supply` still reports
+correct defaults.
+
+Real Kbuild gotcha hit along the way: a composite module's `KBUILD_MODNAME`
+gets C-token-pasted (e.g. in `MODULE_DEVICE_TABLE`), so `obj-m += src/sinput.o`
+with a path-prefixed `src/sinput-y` at the repo-root `Makefile` fails to
+compile (`error: expected '=', ',', ';', 'asm' or '__attribute__' before '/'
+token`) -- the "/" in the derived token breaks the paste. Fixed with a
+proper per-directory `src/Makefile` (`obj-m := sinput.o`, unprefixed) and
+pointing the top-level `Makefile`'s `M=` at `src/` directly, the same way
+in-tree multi-file drivers actually do this.
+
+Added player LED and RGB LED as the first *output* features since the
+FEATURES request -- both capability-gated on `caps.player_leds`/
+`caps.rgb_led` (existing fields, never consulted by anything until now).
+Wire format for both commands came from `leenx-foss/Bluepad32/hil`'s
+`ref-ble-gamepad/BleSInput.cpp`'s `onWrite()` -- real reverse-engineered
+host traffic, the same source that caught the face-button and plug-status
+bugs fixed earlier this project. Two things worth recording:
+
+* `SINPUT_CMD_PLAYER_LED`'s payload is a single scalar "player number" byte
+  (confirmed from `SDL_hidapi_sinput.c`'s own send site: SDL's generic
+  0-based joystick player index, `+1`'d, clamped 0-255), not a bitmask of
+  discrete LEDs. User decision: still expose it as 4 separate on/off
+  `led_classdev`s (PlayStation-style, more familiar to desktop LED tooling),
+  translated to the wire's scalar via `hweight8()` of which LEDs are lit.
+* `SINPUT_CMD_RGB_LED`'s payload is R/G/B each **0-63 (6-bit)**, not 0-255 --
+  `BleSInput.h`'s own comment documents a real off-by-one bug that project
+  hit and fixed in this exact byte layout, so this offset/range is trusted
+  over guessing. Scaled via `(v*63+127)/255`.
+
+Since LED writes can now happen at any time from userspace, unlike the
+single FEATURES request that used to be the only output command, added an
+`output_lock` mutex around every `hid_hw_output_report()` call. Deliberately
+not `hid-playstation.c`'s workqueue-plus-combined-report pattern -- that
+exists because DualSense batches rumble+LEDs+lightbar into one big periodic
+report; SInput's commands are already discrete single-purpose packets, so a
+direct blocking send under a mutex is the right fit.
+
+HIL-verified on `rp4b-ble-hil` against the same ESP32-BLE-Gamepad emulator,
+using its NuS `led?`/`rgb?` queries (built specifically for verifying
+host-sent output commands): writing `1` then `1` to two different player
+LEDs produced `event led 2` on the emulator (`hweight8` of two lit LEDs);
+setting the RGB LED to pure red at full brightness produced
+`event rgb r=63 g=0 b=0` (exact `(255*63+127)/255` match); a mixed color
+(128, 64, 200) produced `r=32 g=16 b=49`, exactly matching the scaling
+formula computed independently. All 5 LED class devices
+(`<hid-id>:white:player-{1..4}`, `<hid-id>:rgb:indicator`) appeared under
+`/sys/class/leds/` with the expected naming.
+
+One more real gap review caught: `struct sinput_caps`'s own comment claims
+"every field defaults to supported" for a device that never answers
+FEATURES, but `player_leds`/`rgb_led` (unlike every axis/IMU field) were
+never actually added to that default-true block in `sinput_probe()` --
+harmless until now since nothing consulted them, but it meant a device that
+times out on FEATURES (which this emulator does most of the time in this
+rig, per every earlier HIL session) would silently get no LEDs at all.
+Fixed by adding them to the same defaults block, consistent with every
+other capability and harmless for an output-only feature (worst case is an
+LED class device userspace can toggle that a real unsupported device
+silently ignores).
+
+A second review pass (after the first fix already looked hardware-verified)
+caught a real write-write race: `sinput_player_led_set()` originally
+computed the new player number under `output_lock` but sent it via a
+*separate*, later lock/unlock in `sinput_send_output_command()`. Two
+concurrent writes to different player LEDs could then have their sends
+reordered relative to their state updates, leaving the device showing a
+stale number that nothing would ever correct (no periodic resync for output
+commands). Fixed by making `sinput_send_output_command()` require the
+caller to already hold `output_lock` (`lockdep_assert_held()`), so every
+call site holds the lock across its whole state-update-plus-send critical
+section instead of composing two separately-locking steps. Re-verified
+after the fix: player LED and dmesg cleanliness both re-checked on real
+hardware, no regression.

@@ -178,11 +178,46 @@ static void test_output_report_layout(void)
 	uint8_t pkt[SINPUT_OUTPUT_REPORT_SIZE] = { 0 };
 
 	pkt[0] = SINPUT_REPORT_ID_OUTPUT;
-	pkt[1] = SINPUT_CMD_FEATURES;
+	pkt[SI_OUT_CMD] = SINPUT_CMD_FEATURES;
 
 	CHECK(sizeof(pkt) == SINPUT_OUTPUT_REPORT_SIZE, "output report size mismatch");
 	CHECK(pkt[0] == SINPUT_REPORT_ID_OUTPUT, "output report id mismatch");
-	CHECK(pkt[1] == SINPUT_CMD_FEATURES, "features command byte mismatch");
+	CHECK(pkt[SI_OUT_CMD] == SINPUT_CMD_FEATURES, "features command byte mismatch");
+}
+
+static void test_player_led_command(void)
+{
+	uint8_t pkt[SINPUT_OUTPUT_REPORT_SIZE] = { 0 };
+
+	pkt[0] = SINPUT_REPORT_ID_OUTPUT;
+	pkt[SI_OUT_CMD] = SINPUT_CMD_PLAYER_LED;
+	pkt[SI_OUT_PLAYER_LED_NUM] = 3;
+
+	CHECK(pkt[SI_OUT_CMD] == SINPUT_CMD_PLAYER_LED, "player LED command byte mismatch");
+	CHECK(pkt[SI_OUT_PLAYER_LED_NUM] == 3, "player LED number mismatch");
+	CHECK(SI_OUT_PLAYER_LED_NUM < SINPUT_OUTPUT_REPORT_SIZE,
+	      "player LED number field overruns report");
+}
+
+static void test_rgb_led_command(void)
+{
+	uint8_t pkt[SINPUT_OUTPUT_REPORT_SIZE] = { 0 };
+
+	pkt[0] = SINPUT_REPORT_ID_OUTPUT;
+	pkt[SI_OUT_CMD] = SINPUT_CMD_RGB_LED;
+	/* Wire values are 0-63 (6-bit); driver scales from 8-bit via (v*63+127)/255. */
+	pkt[SI_OUT_RGB_RED] = 63;
+	pkt[SI_OUT_RGB_GREEN] = 32;
+	pkt[SI_OUT_RGB_BLUE] = 0;
+
+	CHECK(pkt[SI_OUT_CMD] == SINPUT_CMD_RGB_LED, "RGB LED command byte mismatch");
+	CHECK(pkt[SI_OUT_RGB_RED] <= 63, "red channel exceeds 6-bit wire range");
+	CHECK(pkt[SI_OUT_RGB_GREEN] <= 63, "green channel exceeds 6-bit wire range");
+	CHECK(pkt[SI_OUT_RGB_BLUE] <= 63, "blue channel exceeds 6-bit wire range");
+	/* Offsets must be distinct byte positions and stay inside the report. */
+	CHECK(SI_OUT_RGB_RED != SI_OUT_RGB_GREEN && SI_OUT_RGB_GREEN != SI_OUT_RGB_BLUE,
+	      "RGB channel offsets overlap");
+	CHECK(SI_OUT_RGB_BLUE < SINPUT_OUTPUT_REPORT_SIZE, "RGB blue field overruns report");
 }
 
 int main(void)
@@ -191,6 +226,8 @@ int main(void)
 	test_features_response();
 	test_usage_mask();
 	test_output_report_layout();
+	test_player_led_command();
+	test_rgb_led_command();
 
 	if (failures) {
 		fprintf(stderr, "%d check(s) failed\n", failures);

@@ -26,8 +26,15 @@
       including a conservative default (present=0 until a real report
       confirms otherwise). See `research.md`, 2026-09-22.
 - [ ] force feedback
-- [ ] player LED class
-- [ ] RGB LED class
+- [x] player LED class -- N (4) on/off `led_classdev`s, PlayStation-style,
+      translated to SInput's single scalar "player number" wire value via
+      `hweight8()` of which LEDs are lit. HIL-verified: emulator's `led?`
+      NuS query confirms the exact number received. See `research.md`,
+      2026-09-22.
+- [x] RGB LED class -- one `led_classdev_multicolor`, scaled from Linux's
+      0-255 per channel to the wire's 0-63 (6-bit) range. HIL-verified
+      against the emulator's `rgb?` query, exact byte match including a
+      non-trivial mixed color. See `research.md`, 2026-09-22.
 - [ ] touchpad / multitouch
 - [ ] sensor integration
 
@@ -37,7 +44,12 @@
 - [ ] reset/reconnect (several *organic* BLE reconnects observed clean during
       the 2026-09-22 HIL run, see `research.md`, but not a deliberate test)
 - [x] command timeout handling (single features request on probe only)
-- [ ] output command serialization (needed once more than one command exists)
+- [x] output command serialization -- `output_lock` mutex added once player
+      LED/RGB LED became the second and third output commands (FEATURES was
+      the only one before). Caller-held around the whole state-update-plus-
+      send critical section, not just the send, after review caught a
+      write-write race that could leave the device showing a stale value
+      with nothing to ever correct it. See `research.md`, 2026-09-22.
 - [x] malformed packet handling (zero-length raw_event guard)
 - [ ] 1 kHz soak tests
 

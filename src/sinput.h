@@ -12,9 +12,15 @@
 #include <linux/completion.h>
 #include <linux/hid.h>
 #include <linux/input.h>
+#include <linux/led-class-multicolor.h>
+#include <linux/leds.h>
+#include <linux/mutex.h>
 #include <linux/power_supply.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
+
+/* Universal 4-player convention (Xbox/PS/Switch); no SInput spec says a fixed N. */
+#define SINPUT_NUM_PLAYER_LEDS 4
 
 /*
  * Capabilities decoded from the SInput feature response. Every field
@@ -74,7 +80,34 @@ struct sinput_device {
 
 	struct power_supply_desc battery_desc;
 	struct power_supply *battery;
+
+	/*
+	 * Serializes every hid_hw_output_report() call (FEATURES request,
+	 * player LED, RGB LED). Callers hold this around their whole
+	 * state-update-plus-send critical section, not just around the send:
+	 * an LED's brightness_set_blocking can run from any process context,
+	 * so two different player LEDs' callbacks racing each other while
+	 * updating the shared player_leds_state bitmask below (and then each
+	 * sending what they computed) could otherwise reorder and leave the
+	 * device showing a stale value with nothing to ever correct it. See
+	 * sinput_send_output_command()'s comment in sinput_core.c.
+	 */
+	struct mutex output_lock;
+
+	/* Player LEDs: N on/off led_classdevs, translated to a single wire
+	 * number (see SI_OUT_PLAYER_LED_NUM in sinput_protocol.h). Bit i of
+	 * player_leds_state is player_leds[i]'s on/off state.
+	 */
+	struct led_classdev player_leds[SINPUT_NUM_PLAYER_LEDS];
+	u8 player_leds_state;
+
+	/* RGB indicator LED. */
+	struct led_classdev_mc rgb_led;
 };
+
+/* sinput_core.c */
+int sinput_send_output_command(struct sinput_device *sdev, u8 cmd,
+				const u8 *payload, size_t payload_len);
 
 /* sinput_input.c: gamepad buttons/axes and the IMU input device. */
 int sinput_input_init(struct sinput_device *sdev);
@@ -84,5 +117,8 @@ void sinput_input_report(struct sinput_device *sdev, const u8 *data);
 /* sinput_battery.c: power_supply battery device. */
 int sinput_battery_init(struct sinput_device *sdev);
 void sinput_battery_update(struct sinput_device *sdev, const u8 *data);
+
+/* sinput_led.c: player LED + RGB LED, both capability-gated. */
+int sinput_led_init(struct sinput_device *sdev);
 
 #endif /* SINPUT_H */

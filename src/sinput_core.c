@@ -13,7 +13,9 @@
 #include <linux/completion.h>
 #include <linux/hid.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/usb.h>
 #include <linux/version.h>
 
@@ -67,21 +69,55 @@ static void sinput_parse_features(struct sinput_device *sdev,
 		 caps->accel, caps->gyro, caps->button_mask);
 }
 
-static int sinput_request_features(struct sinput_device *sdev)
+/*
+ * Shared by every SInput output command (FEATURES here, player LED / RGB
+ * LED in sinput_led.c). Unlike hid-playstation.c's DualSense driver, which
+ * batches rumble+LEDs+lightbar into one big periodic report via a
+ * workqueue, SInput's commands are already discrete single-purpose packets
+ * -- a direct blocking send is the right fit here, not an added workqueue
+ * indirection.
+ *
+ * Caller must already hold output_lock. This is deliberately not taken
+ * internally: a caller with driver-owned state to update alongside the
+ * send (e.g. sinput_led.c's player_leds_state bitmask) needs the update and
+ * the send to be one atomic critical section, or two concurrent callers can
+ * race and the device ends up displaying a stale value that never gets
+ * corrected -- there is no periodic resync for output commands.
+ */
+int sinput_send_output_command(struct sinput_device *sdev, u8 cmd,
+				const u8 *payload, size_t payload_len)
 {
 	u8 *buf;
 	int ret;
+
+	lockdep_assert_held(&sdev->output_lock);
+
+	if (payload_len > SINPUT_OUTPUT_REPORT_SIZE - (SI_OUT_CMD + 1))
+		return -EINVAL;
 
 	buf = kzalloc(SINPUT_OUTPUT_REPORT_SIZE, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
 	buf[0] = SINPUT_REPORT_ID_OUTPUT;
-	buf[1] = SINPUT_CMD_FEATURES;
+	buf[SI_OUT_CMD] = cmd;
+	if (payload && payload_len)
+		memcpy(buf + SI_OUT_CMD + 1, payload, payload_len);
 
 	ret = hid_hw_output_report(sdev->hdev, buf, SINPUT_OUTPUT_REPORT_SIZE);
 
 	kfree(buf);
+	return ret;
+}
+
+static int sinput_request_features(struct sinput_device *sdev)
+{
+	int ret;
+
+	mutex_lock(&sdev->output_lock);
+	ret = sinput_send_output_command(sdev, SINPUT_CMD_FEATURES, NULL, 0);
+	mutex_unlock(&sdev->output_lock);
+
 	return ret;
 }
 
@@ -100,10 +136,13 @@ static int sinput_probe(struct hid_device *hdev,
 	init_completion(&sdev->caps_done);
 
 	/*
-	 * Until a feature response says otherwise, assume every axis and the
-	 * IMU are present. This preserves today's behaviour for devices that
-	 * do not implement the SInput command/feature protocol, such as the
-	 * generic bring-up test ID.
+	 * Until a feature response says otherwise, assume every axis, the
+	 * IMU, and both LEDs are present. This preserves today's behaviour
+	 * for devices that do not implement the SInput command/feature
+	 * protocol, such as the generic bring-up test ID. Harmless for the
+	 * LEDs even if wrong: worst case is an LED class device userspace can
+	 * toggle that a real device without that LED silently ignores, unlike
+	 * assuming an axis that isn't really there and misreading garbage.
 	 */
 	sdev->caps.left_stick = true;
 	sdev->caps.right_stick = true;
@@ -111,6 +150,8 @@ static int sinput_probe(struct hid_device *hdev,
 	sdev->caps.right_trigger = true;
 	sdev->caps.accel = true;
 	sdev->caps.gyro = true;
+	sdev->caps.player_leds = true;
+	sdev->caps.rgb_led = true;
 	sdev->caps.button_mask = ~0u;
 
 	/*
@@ -125,6 +166,13 @@ static int sinput_probe(struct hid_device *hdev,
 	spin_lock_init(&sdev->battery_lock);
 	sdev->battery_plug_status = SI_PLUG_STATUS_UNKNOWN;
 	sdev->battery_capacity = 100;
+
+	/*
+	 * Also must be ready before hid_hw_start(): the FEATURES request is
+	 * the first output command and is sent right after, via
+	 * sinput_send_output_command() below.
+	 */
+	mutex_init(&sdev->output_lock);
 
 	/*
 	 * Deliberately do not request HID_CONNECT_HIDINPUT. This prevents
@@ -159,6 +207,10 @@ static int sinput_probe(struct hid_device *hdev,
 			goto stop;
 	}
 
+	ret = sinput_led_init(sdev);
+	if (ret)
+		goto stop;
+
 	hid_info(hdev, "SInput driver attached (experimental)\n");
 	return 0;
 
@@ -169,7 +221,10 @@ stop:
 
 static void sinput_remove(struct hid_device *hdev)
 {
+	struct sinput_device *sdev = hid_get_drvdata(hdev);
+
 	hid_hw_stop(hdev);
+	mutex_destroy(&sdev->output_lock);
 }
 
 static int sinput_raw_event(struct hid_device *hdev,

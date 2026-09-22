@@ -58,7 +58,7 @@ checkpatch:
       perl /tmp/checkpatch/checkpatch.pl --no-tree --no-signoff \
         --ignore=LINUX_VERSION_CODE,CONSTANT_COMPARISON \
         --file src/sinput_core.c src/sinput_input.c src/sinput_battery.c \
-        src/sinput.h src/sinput_protocol.h
+        src/sinput_led.c src/sinput.h src/sinput_protocol.h
 
 # Compile the module against real kernel headers for a couple of
 # released kernel versions. This is a compile check only: it catches
