@@ -84,4 +84,44 @@
 #define SI_FLAG1_RGB_LED  0x02
 #define SI_FLAG1_HANDHELD 0x04
 
+/*
+ * Button bit indices. The state report's four button bytes (SI_BUTTONS_0..
+ * SI_BUTTONS_3, read as one little-endian 32-bit word) and the feature
+ * response's 4-byte usage mask (SI_FEAT_USAGE_MASK_0, same 32-bit layout)
+ * share this numbering: usage mask bit N clear means button N does not
+ * exist on this device and its state bit should be ignored.
+ *
+ * Only indices the driver currently maps to a Linux key code are listed;
+ * see SDL_hidapi_sinput.c for the full 32-bit layout (paddles, touchpad
+ * clicks, power, misc4-10) if more are mapped later.
+ *
+ * The face-button values below deliberately do NOT match SDL_hidapi_sinput.c's
+ * own SINPUT_BUTTON_IDX_* names for these four bits. HIL testing against a
+ * real ESP32-BLE-Gamepad SInput device (2026-09-22, rp4b-ble-hil, see
+ * docs/research.md) showed bits 0-3 are physically south/east/west/north in
+ * that order, not SDL's east/south/north/west -- SDL's own constant names
+ * are inconsistent with the gamepad mapping string it actually builds at
+ * runtime. This was independently caught by the Bluepad32 HIL project too
+ * (leenx-foss/Bluepad32/hil CLAUDE.md: "bit 0 = A/south (SDL's constants
+ * name it 'east')"). Trust the hardware, not SDL's #define names.
+ */
+#define SINPUT_BTN_IDX_SOUTH         0
+#define SINPUT_BTN_IDX_EAST          1
+#define SINPUT_BTN_IDX_WEST          2
+#define SINPUT_BTN_IDX_NORTH         3
+#define SINPUT_BTN_IDX_DPAD_UP       4
+#define SINPUT_BTN_IDX_DPAD_DOWN     5
+#define SINPUT_BTN_IDX_DPAD_LEFT     6
+#define SINPUT_BTN_IDX_DPAD_RIGHT    7
+#define SINPUT_BTN_IDX_LEFT_STICK    8
+#define SINPUT_BTN_IDX_RIGHT_STICK   9
+#define SINPUT_BTN_IDX_LEFT_BUMPER   10
+#define SINPUT_BTN_IDX_RIGHT_BUMPER  11
+#define SINPUT_BTN_IDX_LEFT_TRIGGER  12
+#define SINPUT_BTN_IDX_RIGHT_TRIGGER 13
+#define SINPUT_BTN_IDX_START         16
+#define SINPUT_BTN_IDX_BACK          17
+#define SINPUT_BTN_IDX_GUIDE         18
+#define SINPUT_BTN_IDX_CAPTURE       19
+
 #endif /* SINPUT_PROTOCOL_H */

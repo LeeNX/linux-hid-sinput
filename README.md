@@ -7,14 +7,17 @@ driver. The first goal is to establish a clean DKMS/module test loop against SIn
 devices, then add the protocol features that Linux's generic HID/gamepad path does
 not expose cleanly.
 
-**No SInput hardware is owned.** Development is based on the published
+**No dedicated SInput product is owned.** Development is based on the published
 [SInput specification](https://docs.handheldlegend.com/s/sinput) and Hand Held
 Legend's [SInput-HID](https://github.com/HandHeldLegend/SInput-HID) reference
 repository, cross-checked against SDL's SInput HIDAPI implementation (the same
 code shipped in the [SDL 3.4.x release series](https://github.com/libsdl-org/SDL/releases/tag/release-3.4.0),
-first publicly available around 3.4.6) — not from capturing a real device's
-traffic. Treat protocol details as best-effort until validated against real
-hardware. The planned test target is a DIY SInput-compatible controller built
+first publicly available around 3.4.6). Most protocol details are still
+best-effort until further validated, but the module has now been run once
+against a real ESP32-BLE-Gamepad SInput device over BLE, which caught (and
+fixed) a real transport gap and a real button-mapping bug — see
+[`docs/research.md`](docs/research.md#2026-09-22-first-real-hardware-ble-hil-run-and-a-real-bug-it-caught).
+The planned test target is a DIY SInput-compatible controller built
 on [lemmingDev/ESP32-BLE-Gamepad](https://github.com/lemmingDev/ESP32-BLE-Gamepad),
 with hardware-in-the-loop testing tracked in
 [LeeNX/ESP32-BLE-Gamepad-HIL](https://github.com/LeeNX/ESP32-BLE-Gamepad-HIL)
@@ -44,7 +47,7 @@ See [`docs/research.md`](docs/research.md) for sources and design notes.
 
 The module:
 
-1. binds to the SInput generic test VID/PID (`2E8A:10C6`);
+1. binds to the SInput generic test VID/PID (`2E8A:10C6`) over USB or Bluetooth;
 2. uses the Linux HID framework;
 3. creates an explicit evdev input device instead of relying on `hid-generic`;
 4. sends the SInput `FEATURES` command on probe and decodes the response
@@ -52,8 +55,8 @@ The module:
    support) with a short timeout, falling back to "assume everything is
    present" if the device never answers;
 5. decodes the SInput state report;
-6. exposes buttons, D-pad, and only the sticks/triggers the feature response
-   (or the fallback) says exist;
+6. exposes only the buttons, D-pad, and sticks/triggers the feature response's
+   usage mask (or the fallback) says exist;
 7. exposes a separate IMU input device, with only the accel/gyro axes the
    device actually advertises;
 8. records battery/power fields for future `power_supply` integration.
@@ -259,15 +262,21 @@ feature set as evidence that SInput is ready for upstream Linux.
 * [x] precompiled binary `.deb` packaging for one exact kernel build
       ([`scripts/build-binary-deb.sh`](scripts/build-binary-deb.sh)), verified for Raspberry Pi 3 (see
       [`docs/rpi-hil.md`](docs/rpi-hil.md))
-* [ ] capability-driven *button* mapping (buttons are still always registered)
+* [x] capability-driven *button* mapping (registration and reporting both
+      gated on the feature response's usage mask, falling back to "assume
+      every mapped button exists" like the other capabilities)
 * [ ] battery / `power_supply`
 * [ ] force feedback / rumble output command
 * [ ] player LEDs
 * [ ] RGB LED
 * [ ] touchpads
 * [ ] output-command serialization and locking (only a single request-on-probe today)
-* [ ] USB + Bluetooth transport testing
+* [ ] USB + Bluetooth transport testing (Bluetooth binding added and verified
+      against a real device over BLE; USB still untested; see
+      [`docs/research.md`](docs/research.md))
 * [ ] suspend/resume
-* [ ] kernel version compatibility matrix (compile-verified on 6.1 and 6.12 so far; no real hardware yet)
-* [ ] HIL tests using ESP32 SInput firmware
+* [ ] kernel version compatibility matrix (compile-verified on 6.1 and 6.12; now also
+      real-hardware-verified on 6.18 via [`docs/rpi-hil.md`](docs/rpi-hil.md))
+* [x] HIL tests using ESP32 SInput firmware (real device, BLE, against
+      `rp4b-ble-hil`; see [`docs/research.md`](docs/research.md))
 * [ ] evaluate whether an upstream Linux HID driver is justified (where would this posted/reported?)
