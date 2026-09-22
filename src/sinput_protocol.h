@@ -30,6 +30,23 @@
 /* State report (SINPUT_REPORT_ID_STATE) byte offsets, report ID at byte 0. */
 #define SI_PLUG_STATUS   1
 #define SI_CHARGE_LEVEL  2
+
+/*
+ * SI_PLUG_STATUS values. Unlike the feature-response flags, battery/charge
+ * state has no capability bit -- these two bytes are always present in
+ * every state report, present or not. Confirmed against SDL_hidapi_sinput.c's
+ * HandleStatePacket switch (not SDL's own #define names -- see the
+ * SINPUT_BTN_IDX_* comment above the button table in sinput.c for why those
+ * aren't trustworthy on their own) and cross-checked against a real SInput
+ * BLE device's ESP32-BLE-Gamepad firmware, which produces exactly these five
+ * values (leenx-foss/Bluepad32/hil's BleSInput.h). SDL forces charge level to
+ * 0 for NO_BATTERY and 100 for CHARGED.
+ */
+#define SI_PLUG_STATUS_UNKNOWN    0
+#define SI_PLUG_STATUS_NO_BATTERY 1
+#define SI_PLUG_STATUS_CHARGING   2
+#define SI_PLUG_STATUS_CHARGED    3
+#define SI_PLUG_STATUS_ON_BATTERY 4
 #define SI_BUTTONS_0     3
 #define SI_BUTTONS_1     4
 #define SI_BUTTONS_2     5

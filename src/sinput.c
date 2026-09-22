@@ -11,7 +11,9 @@
 #include <linux/input.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/power_supply.h>
 #include <linux/slab.h>
+#include <linux/spinlock.h>
 #include <linux/usb.h>
 #include <linux/version.h>
 
@@ -67,6 +69,22 @@ struct sinput_device {
 	struct input_dev *imu;
 	struct sinput_caps caps;
 	struct completion caps_done;
+
+	/*
+	 * Battery/charge state. Unlike sdev->caps (only read at registration
+	 * time, see the comment above struct sinput_caps), these are read
+	 * throughout the device's life by sinput_battery_get_property() --
+	 * called from arbitrary process context via sysfs, concurrently with
+	 * sinput_report_gamepad() updating them from raw_event context -- so
+	 * they need a real lock, not the "fixed after registration" trick
+	 * used for input capabilities.
+	 */
+	spinlock_t battery_lock;
+	u8 battery_capacity;     /* 0-100 */
+	u8 battery_plug_status;  /* SI_PLUG_STATUS_* */
+
+	struct power_supply_desc battery_desc;
+	struct power_supply *battery;
 };
 
 /* Single source of truth for which SInput button bit maps to which Linux key. */
@@ -105,6 +123,7 @@ static void sinput_report_gamepad(struct sinput_device *sdev,
 				  const u8 *data, size_t size)
 {
 	struct input_dev *in = sdev->input;
+	unsigned long flags;
 	u32 buttons;
 	unsigned int i;
 
@@ -122,6 +141,18 @@ static void sinput_report_gamepad(struct sinput_device *sdev,
 
 	if (data[0] != SINPUT_REPORT_ID_STATE)
 		return;
+
+	/*
+	 * SI_PLUG_STATUS/SI_CHARGE_LEVEL have no capability bit -- they're
+	 * always present -- so unlike everything else in this function they
+	 * don't need a "was this registered" check, just the lock that
+	 * sinput_battery_get_property() also takes.
+	 */
+	spin_lock_irqsave(&sdev->battery_lock, flags);
+	sdev->battery_plug_status = data[SI_PLUG_STATUS];
+	/* Protocol says 0-100; clamp defensively against a malformed/buggy device. */
+	sdev->battery_capacity = min_t(u8, data[SI_CHARGE_LEVEL], 100);
+	spin_unlock_irqrestore(&sdev->battery_lock, flags);
 
 	buttons = get_unaligned_le32(data + SI_BUTTONS_0);
 
@@ -302,6 +333,123 @@ static int sinput_imu_init(struct sinput_device *sdev)
 	return input_register_device(imu);
 }
 
+static int sinput_battery_status(u8 plug_status)
+{
+	switch (plug_status) {
+	case SI_PLUG_STATUS_CHARGING:
+		return POWER_SUPPLY_STATUS_CHARGING;
+	case SI_PLUG_STATUS_CHARGED:
+		return POWER_SUPPLY_STATUS_FULL;
+	case SI_PLUG_STATUS_ON_BATTERY:
+		return POWER_SUPPLY_STATUS_DISCHARGING;
+	case SI_PLUG_STATUS_NO_BATTERY:
+		return POWER_SUPPLY_STATUS_NOT_CHARGING;
+	case SI_PLUG_STATUS_UNKNOWN:
+	default:
+		return POWER_SUPPLY_STATUS_UNKNOWN;
+	}
+}
+
+/*
+ * Allow-list rather than deny-list: SI_PLUG_STATUS_UNKNOWN (the value this
+ * driver initializes to before the first state report, and what a device
+ * that never reports plug status at all would stay at forever) means "not
+ * confirmed present", not "present". Only report present for the plug
+ * states that actually confirm a battery exists.
+ */
+static bool sinput_battery_present(u8 plug_status)
+{
+	return plug_status == SI_PLUG_STATUS_CHARGING ||
+	       plug_status == SI_PLUG_STATUS_CHARGED ||
+	       plug_status == SI_PLUG_STATUS_ON_BATTERY;
+}
+
+static enum power_supply_property sinput_battery_props[] = {
+	POWER_SUPPLY_PROP_STATUS,
+	POWER_SUPPLY_PROP_PRESENT,
+	POWER_SUPPLY_PROP_CAPACITY,
+	POWER_SUPPLY_PROP_SCOPE,
+};
+
+static int sinput_battery_get_property(struct power_supply *psy,
+					enum power_supply_property psp,
+					union power_supply_propval *val)
+{
+	struct sinput_device *sdev = power_supply_get_drvdata(psy);
+	unsigned long flags;
+	u8 plug_status, capacity;
+	int ret = 0;
+
+	spin_lock_irqsave(&sdev->battery_lock, flags);
+	plug_status = sdev->battery_plug_status;
+	capacity = sdev->battery_capacity;
+	spin_unlock_irqrestore(&sdev->battery_lock, flags);
+
+	switch (psp) {
+	case POWER_SUPPLY_PROP_STATUS:
+		val->intval = sinput_battery_status(plug_status);
+		break;
+	case POWER_SUPPLY_PROP_PRESENT:
+		val->intval = sinput_battery_present(plug_status);
+		break;
+	case POWER_SUPPLY_PROP_CAPACITY:
+		val->intval = capacity;
+		break;
+	case POWER_SUPPLY_PROP_SCOPE:
+		val->intval = POWER_SUPPLY_SCOPE_DEVICE;
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+
+	return ret;
+}
+
+/*
+ * SI_PLUG_STATUS/SI_CHARGE_LEVEL have no capability bit (see the comment in
+ * sinput_protocol.h), so unlike sinput_input_init()/sinput_imu_init() this
+ * never depends on sdev->caps and can run regardless of whether a FEATURES
+ * response ever arrives.
+ */
+static int sinput_battery_init(struct sinput_device *sdev)
+{
+	struct power_supply_config battery_cfg = { .drv_data = sdev };
+	struct power_supply *battery;
+	int ret;
+
+	sdev->battery_desc.type = POWER_SUPPLY_TYPE_BATTERY;
+	sdev->battery_desc.properties = sinput_battery_props;
+	sdev->battery_desc.num_properties = ARRAY_SIZE(sinput_battery_props);
+	sdev->battery_desc.get_property = sinput_battery_get_property;
+	sdev->battery_desc.name = devm_kasprintf(&sdev->hdev->dev, GFP_KERNEL,
+						  "sinput-battery-%s",
+						  dev_name(&sdev->hdev->dev));
+	if (!sdev->battery_desc.name)
+		return -ENOMEM;
+
+	battery = devm_power_supply_register(&sdev->hdev->dev, &sdev->battery_desc,
+					      &battery_cfg);
+	if (IS_ERR(battery)) {
+		hid_err(sdev->hdev, "could not register battery device: %ld\n",
+			PTR_ERR(battery));
+		return PTR_ERR(battery);
+	}
+	sdev->battery = battery;
+
+	/*
+	 * Only links the battery's sysfs dir to the HID device for topology
+	 * discovery (udev/upower); doesn't affect POWER_SUPPLY_PROP_* at all.
+	 * Not worth tearing down the already-registered gamepad/IMU input
+	 * devices over, so log and keep going rather than fail probe().
+	 */
+	ret = power_supply_powers(sdev->battery, &sdev->hdev->dev);
+	if (ret)
+		hid_info(sdev->hdev, "could not link battery power topology: %d\n", ret);
+
+	return 0;
+}
+
 static int sinput_probe(struct hid_device *hdev,
 			const struct hid_device_id *id)
 {
@@ -331,6 +479,20 @@ static int sinput_probe(struct hid_device *hdev,
 	sdev->caps.button_mask = ~0u;
 
 	/*
+	 * Must be ready before hid_hw_start(): that call enables raw_event
+	 * delivery immediately, and sinput_report_gamepad() takes this lock
+	 * on every state report from then on (it only checks sdev->input for
+	 * readiness, not the battery fields -- see the comment there).
+	 * Initializing it later, inside sinput_battery_init() alongside the
+	 * power_supply registration itself, left exactly this kind of window
+	 * open once before (see sinput_report_gamepad()'s NULL sdev->input
+	 * comment) and did again here until review caught it.
+	 */
+	spin_lock_init(&sdev->battery_lock);
+	sdev->battery_plug_status = SI_PLUG_STATUS_UNKNOWN;
+	sdev->battery_capacity = 100;
+
+	/*
 	 * Deliberately do not request HID_CONNECT_HIDINPUT. This prevents
 	 * hid-generic from creating a second input device for this HID
 	 * collection while we develop the SInput-specific input path.
@@ -350,6 +512,10 @@ static int sinput_probe(struct hid_device *hdev,
 		hid_info(hdev, "no SInput features response, assuming full capability set\n");
 
 	ret = sinput_input_init(sdev);
+	if (ret)
+		goto stop;
+
+	ret = sinput_battery_init(sdev);
 	if (ret)
 		goto stop;
 

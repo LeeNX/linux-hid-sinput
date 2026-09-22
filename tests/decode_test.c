@@ -52,7 +52,7 @@ static void test_state_report(void)
 	uint8_t pkt[SINPUT_INPUT_REPORT_SIZE] = { 0 };
 
 	pkt[0] = SINPUT_REPORT_ID_STATE;
-	pkt[SI_PLUG_STATUS] = 4;   /* on battery */
+	pkt[SI_PLUG_STATUS] = SI_PLUG_STATUS_ON_BATTERY;
 	pkt[SI_CHARGE_LEVEL] = 77;
 
 	/* BTN_SOUTH and BTN_DPAD_UP held. */
@@ -73,6 +73,8 @@ static void test_state_report(void)
 	put_le16(pkt, SI_GYRO_Z, 600);
 
 	CHECK(pkt[0] == SINPUT_REPORT_ID_STATE, "state report id mismatch");
+	CHECK(pkt[SI_PLUG_STATUS] == SI_PLUG_STATUS_ON_BATTERY, "plug status mismatch");
+	CHECK(pkt[SI_CHARGE_LEVEL] == 77, "charge level mismatch");
 
 	uint32_t buttons = pkt[SI_BUTTONS_0] | (pkt[SI_BUTTONS_0 + 1] << 8) |
 			   (pkt[SI_BUTTONS_0 + 2] << 16) | (pkt[SI_BUTTONS_0 + 3] << 24);

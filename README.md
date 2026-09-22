@@ -59,7 +59,8 @@ The module:
    usage mask (or the fallback) says exist;
 7. exposes a separate IMU input device, with only the accel/gyro axes the
    device actually advertises;
-8. records battery/power fields for future `power_supply` integration.
+8. exposes battery/charge state as a standard Linux `power_supply` battery
+   device (always present in every state report, no capability bit).
 
 Rumble, player LEDs, RGB LEDs, touchpads, and a proper `power_supply` class
 device are intentionally left as follow-up work. The feature-response layout
@@ -265,7 +266,8 @@ feature set as evidence that SInput is ready for upstream Linux.
 * [x] capability-driven *button* mapping (registration and reporting both
       gated on the feature response's usage mask, falling back to "assume
       every mapped button exists" like the other capabilities)
-* [ ] battery / `power_supply`
+* [x] battery / `power_supply` (HIL-verified against real hardware; see
+      [`docs/research.md`](docs/research.md))
 * [ ] force feedback / rumble output command
 * [ ] player LEDs
 * [ ] RGB LED
