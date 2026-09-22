@@ -30,6 +30,13 @@
  * defaults to "supported" so that a device which never answers the
  * features request (such as the generic bring-up test ID) keeps today's
  * behaviour of exposing every axis, button, and the IMU unconditionally.
+ *
+ * Only consulted at registration time (sinput_input_init()/sinput_imu_init(),
+ * called once from probe()). A FEATURES response can arrive after that --
+ * there is no lock between this struct and the raw_event path that mutates
+ * it -- so reporting must never branch on these fields afterwards; it reads
+ * back the input device's own (fixed-after-registration) capability bitmaps
+ * instead. See sinput_report_gamepad().
  */
 struct sinput_caps {
 	bool valid;
@@ -101,6 +108,15 @@ static void sinput_report_gamepad(struct sinput_device *sdev,
 	u32 buttons;
 	unsigned int i;
 
+	/*
+	 * hid_hw_start() enables raw_event delivery before sinput_input_init()
+	 * assigns sdev->input (it runs later in probe(), after the FEATURES
+	 * request/timeout). An unsolicited state report in that window would
+	 * otherwise dereference a NULL input_dev.
+	 */
+	if (!in)
+		return;
+
 	if (size < SINPUT_INPUT_REPORT_SIZE)
 		return;
 
@@ -109,36 +125,44 @@ static void sinput_report_gamepad(struct sinput_device *sdev,
 
 	buttons = get_unaligned_le32(data + SI_BUTTONS_0);
 
-	/* Only report buttons the usage mask says this device actually has. */
+	/*
+	 * Gate on what actually got registered (in->keybit/absbit), not on
+	 * sdev->caps: a FEATURES response can arrive after sinput_input_init()
+	 * already ran (e.g. past the probe timeout), and caps is mutated in
+	 * place with no synchronization against this raw_event path. Input
+	 * capability bitmaps are fixed at input_register_device() time and
+	 * never change afterwards, so reading them here is race-free and keeps
+	 * reporting consistent with what was actually registered.
+	 */
 	for (i = 0; i < ARRAY_SIZE(sinput_buttons); i++) {
 		const struct sinput_button_map *b = &sinput_buttons[i];
 
-		if (sdev->caps.button_mask & BIT(b->idx))
+		if (test_bit(b->code, in->keybit))
 			input_report_key(in, b->code, !!(buttons & BIT(b->idx)));
 	}
 
-	if (sdev->caps.left_stick) {
+	if (test_bit(ABS_X, in->absbit)) {
 		input_report_abs(in, ABS_X, si_s16(data, SI_LEFT_X));
 		input_report_abs(in, ABS_Y, si_s16(data, SI_LEFT_Y));
 	}
-	if (sdev->caps.right_stick) {
+	if (test_bit(ABS_RX, in->absbit)) {
 		input_report_abs(in, ABS_RX, si_s16(data, SI_RIGHT_X));
 		input_report_abs(in, ABS_RY, si_s16(data, SI_RIGHT_Y));
 	}
-	if (sdev->caps.left_trigger)
+	if (test_bit(ABS_Z, in->absbit))
 		input_report_abs(in, ABS_Z, si_s16(data, SI_LEFT_TRIGGER));
-	if (sdev->caps.right_trigger)
+	if (test_bit(ABS_RZ, in->absbit))
 		input_report_abs(in, ABS_RZ, si_s16(data, SI_RIGHT_TRIGGER));
 
 	input_sync(in);
 
 	if (sdev->imu) {
-		if (sdev->caps.accel) {
+		if (test_bit(ABS_X, sdev->imu->absbit)) {
 			input_report_abs(sdev->imu, ABS_X, si_s16(data, SI_ACCEL_X));
 			input_report_abs(sdev->imu, ABS_Y, si_s16(data, SI_ACCEL_Y));
 			input_report_abs(sdev->imu, ABS_Z, si_s16(data, SI_ACCEL_Z));
 		}
-		if (sdev->caps.gyro) {
+		if (test_bit(ABS_RX, sdev->imu->absbit)) {
 			input_report_abs(sdev->imu, ABS_RX, si_s16(data, SI_GYRO_X));
 			input_report_abs(sdev->imu, ABS_RY, si_s16(data, SI_GYRO_Y));
 			input_report_abs(sdev->imu, ABS_RZ, si_s16(data, SI_GYRO_Z));

@@ -55,8 +55,8 @@ static void test_state_report(void)
 	pkt[SI_PLUG_STATUS] = 4;   /* on battery */
 	pkt[SI_CHARGE_LEVEL] = 77;
 
-	/* BTN_SOUTH (bit 1) and BTN_DPAD_UP (bit 4) held. */
-	put_le32(pkt, SI_BUTTONS_0, (1u << 1) | (1u << 4));
+	/* BTN_SOUTH and BTN_DPAD_UP held. */
+	put_le32(pkt, SI_BUTTONS_0, (1u << SINPUT_BTN_IDX_SOUTH) | (1u << SINPUT_BTN_IDX_DPAD_UP));
 
 	put_le16(pkt, SI_LEFT_X, (uint16_t)-1000);
 	put_le16(pkt, SI_LEFT_Y, 1000);
@@ -76,9 +76,9 @@ static void test_state_report(void)
 
 	uint32_t buttons = pkt[SI_BUTTONS_0] | (pkt[SI_BUTTONS_0 + 1] << 8) |
 			   (pkt[SI_BUTTONS_0 + 2] << 16) | (pkt[SI_BUTTONS_0 + 3] << 24);
-	CHECK((buttons & (1u << 1)) != 0, "BTN_SOUTH bit not set");
-	CHECK((buttons & (1u << 4)) != 0, "BTN_DPAD_UP bit not set");
-	CHECK((buttons & (1u << 0)) == 0, "BTN_EAST bit unexpectedly set");
+	CHECK((buttons & (1u << SINPUT_BTN_IDX_SOUTH)) != 0, "BTN_SOUTH bit not set");
+	CHECK((buttons & (1u << SINPUT_BTN_IDX_DPAD_UP)) != 0, "BTN_DPAD_UP bit not set");
+	CHECK((buttons & (1u << SINPUT_BTN_IDX_EAST)) == 0, "BTN_EAST bit unexpectedly set");
 
 	CHECK((int16_t)get_le16(pkt, SI_LEFT_X) == -1000, "left x mismatch");
 	CHECK((int16_t)get_le16(pkt, SI_LEFT_Y) == 1000, "left y mismatch");
