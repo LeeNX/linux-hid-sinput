@@ -226,10 +226,12 @@ reports and compare:
 
 ## Hardware and testing status
 
-No SInput hardware is owned. Everything above is derived from the published
-specification and SDL's reference implementation, not from capturing a real
-device's traffic — treat protocol details here as best-effort until
-validated against real hardware.
+No dedicated SInput product is owned. Most of the above is still derived from
+the published specification and SDL's reference implementation, not from
+capturing a real device's traffic — treat protocol details as best-effort
+until further validated. One piece is no longer best-effort: see the BLE HIL
+result below, which used a real ESP32-BLE-Gamepad running actual SInput
+firmware, not a synthetic packet.
 
 The planned test target is a DIY SInput-compatible controller built on
 lemmingDev's ESP32-BLE-Gamepad firmware
@@ -237,3 +239,57 @@ lemmingDev's ESP32-BLE-Gamepad firmware
 testing tracked separately in
 https://github.com/LeeNX/ESP32-BLE-Gamepad-HIL against a Raspberry Pi 3 (see
 [`rpi-hil.md`](rpi-hil.md) for the Pi-side packaging/build story).
+
+### 2026-09-22: first real-hardware BLE HIL run, and a real bug it caught
+
+Ran the module against a real SInput device for the first time, over
+Bluetooth LE rather than USB: the `leenx-foss/Bluepad32/hil` rig's ESP32-C3
+emulator (real `ESP32-BLE-Gamepad` v0.8.0 firmware, SInput mode, VID:PID
+`2E8A:10C6`), paired to a Raspberry Pi 4B (`rp4b-ble-hil`, Debian trixie,
+kernel `6.18.50+rpt-rpi-v8`) running this module. The `.deb` was cross-built
+in a local `podman` container (`debian:trixie`, native arm64 on Apple
+Silicon) pinned to the Pi's exact kernel-headers version, per
+[`rpi-hil.md`](rpi-hil.md); vermagic matched exactly and `dpkg -i` +
+`modprobe` loaded cleanly.
+
+Two real findings, not simulated ones:
+
+1. **The device table was USB-only.** `sinput_devices[]` only had
+   `HID_USB_DEVICE()`; a Bluetooth-connected SInput device would never bind
+   to this driver at all (it fell through to `hid-generic`). Fixed by adding
+   a matching `HID_BLUETOOTH_DEVICE()` entry. Obvious in hindsight, invisible
+   from a synthetic-packet test — `make check` cannot catch a missing bus
+   match, only a real transport can.
+2. **The face-button bit-to-name mapping was wrong**, inherited directly
+   from SDL's own naming. `SDL_hidapi_sinput.c` defines
+   `SINPUT_BUTTON_IDX_EAST = 0` and `SINPUT_BUTTON_IDX_SOUTH = 1`, and this
+   driver copied those names verbatim into `SINPUT_BTN_IDX_*`. Commanding
+   the emulator's button 1 (documented by the HIL rig's own
+   `CLAUDE.md` as SInput's south/A button, and independently confirmed by
+   watching its BLE-notified button number in the raw state report) produced
+   `BTN_EAST` (Linux code 305) from this driver, not `BTN_SOUTH` (304) —
+   confirmed for all four face buttons by commanding each individually over
+   the emulator's NuS bridge (a Nordic UART Service GATT characteristic
+   alongside its HID service on the same BLE connection) and reading back
+   the resulting evdev key codes. The actual hardware order is south, east,
+   west, north for bits 0-3 — SDL's own `#define` names do not match the
+   gamepad button mapping string SDL itself builds at runtime. This matches
+   a gotcha the Bluepad32 HIL project had already hit independently
+   (`leenx-foss/Bluepad32/hil` `CLAUDE.md`: "SInput face buttons: bit 0 =
+   A/south (SDL's constants name it 'east')"). Fixed by correcting the
+   `SINPUT_BTN_IDX_{SOUTH,EAST,WEST,NORTH}` values in
+   `sinput_protocol.h` to match the verified hardware order, re-flashed and
+   re-verified clean (`press 1` -> `BTN_SOUTH`, etc.) after the fix.
+
+Also confirmed clean on real hardware: the SInput `FEATURES` command/response
+round-trip (protocol v1, poll rate 5000 us, both sticks, both triggers,
+accel, gyro, all mapped buttons present per the usage mask), capability-driven
+axis/IMU/button registration, and repeated probe/remove cycles across several
+organic BLE reconnects with no kernel warnings, oopses, or leaks observed in
+`dmesg`.
+
+Not yet exercised: USB transport (BLE only so far), D-pad/bumper/stick-click/
+trigger button bits individually (registration was observed via the feature
+response and the noisy soak-generator capture, but not isolated
+press/release-checked the way the four face buttons were), rumble/LEDs,
+touchpad, IMU data values, and suspend/resume.

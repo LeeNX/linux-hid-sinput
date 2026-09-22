@@ -9,6 +9,7 @@
 #include <linux/completion.h>
 #include <linux/hid.h>
 #include <linux/input.h>
+#include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/usb.h>
@@ -28,7 +29,7 @@
  * Capabilities decoded from the SInput feature response. Every field
  * defaults to "supported" so that a device which never answers the
  * features request (such as the generic bring-up test ID) keeps today's
- * behaviour of exposing every axis and the IMU unconditionally.
+ * behaviour of exposing every axis, button, and the IMU unconditionally.
  */
 struct sinput_caps {
 	bool valid;
@@ -44,6 +45,13 @@ struct sinput_caps {
 	bool right_trigger;
 	bool touchpad;
 	bool rgb_led;
+	/*
+	 * Bit N set means the SInput usage mask reports button N (see
+	 * SINPUT_BTN_IDX_* in sinput_protocol.h) as present. Defaults to
+	 * all-ones so a device that never answers the features request
+	 * keeps every mapped button registered, same as the other caps.
+	 */
+	u32 button_mask;
 };
 
 struct sinput_device {
@@ -52,6 +60,33 @@ struct sinput_device {
 	struct input_dev *imu;
 	struct sinput_caps caps;
 	struct completion caps_done;
+};
+
+/* Single source of truth for which SInput button bit maps to which Linux key. */
+struct sinput_button_map {
+	u8 idx;
+	u16 code;
+};
+
+static const struct sinput_button_map sinput_buttons[] = {
+	{ SINPUT_BTN_IDX_SOUTH,         BTN_SOUTH },
+	{ SINPUT_BTN_IDX_EAST,          BTN_EAST },
+	{ SINPUT_BTN_IDX_WEST,          BTN_WEST },
+	{ SINPUT_BTN_IDX_NORTH,         BTN_NORTH },
+	{ SINPUT_BTN_IDX_DPAD_UP,       BTN_DPAD_UP },
+	{ SINPUT_BTN_IDX_DPAD_DOWN,     BTN_DPAD_DOWN },
+	{ SINPUT_BTN_IDX_DPAD_LEFT,     BTN_DPAD_LEFT },
+	{ SINPUT_BTN_IDX_DPAD_RIGHT,    BTN_DPAD_RIGHT },
+	{ SINPUT_BTN_IDX_LEFT_STICK,    BTN_THUMBL },
+	{ SINPUT_BTN_IDX_RIGHT_STICK,   BTN_THUMBR },
+	{ SINPUT_BTN_IDX_LEFT_BUMPER,   BTN_TL },
+	{ SINPUT_BTN_IDX_RIGHT_BUMPER,  BTN_TR },
+	{ SINPUT_BTN_IDX_LEFT_TRIGGER,  BTN_TL2 },
+	{ SINPUT_BTN_IDX_RIGHT_TRIGGER, BTN_TR2 },
+	{ SINPUT_BTN_IDX_START,         BTN_START },
+	{ SINPUT_BTN_IDX_BACK,          BTN_SELECT },
+	{ SINPUT_BTN_IDX_GUIDE,         BTN_MODE },
+	{ SINPUT_BTN_IDX_CAPTURE,       BTN_MISC },
 };
 
 static s16 si_s16(const u8 *d, unsigned int off)
@@ -64,6 +99,7 @@ static void sinput_report_gamepad(struct sinput_device *sdev,
 {
 	struct input_dev *in = sdev->input;
 	u32 buttons;
+	unsigned int i;
 
 	if (size < SINPUT_INPUT_REPORT_SIZE)
 		return;
@@ -73,29 +109,13 @@ static void sinput_report_gamepad(struct sinput_device *sdev,
 
 	buttons = get_unaligned_le32(data + SI_BUTTONS_0);
 
-	/* SInput button indices 0..23 are mapped to common Linux gamepad keys. */
-	input_report_key(in, BTN_EAST,     !!(buttons & BIT(0)));
-	input_report_key(in, BTN_SOUTH,    !!(buttons & BIT(1)));
-	input_report_key(in, BTN_NORTH,    !!(buttons & BIT(2)));
-	input_report_key(in, BTN_WEST,     !!(buttons & BIT(3)));
+	/* Only report buttons the usage mask says this device actually has. */
+	for (i = 0; i < ARRAY_SIZE(sinput_buttons); i++) {
+		const struct sinput_button_map *b = &sinput_buttons[i];
 
-	input_report_key(in, BTN_DPAD_UP,    !!(buttons & BIT(4)));
-	input_report_key(in, BTN_DPAD_DOWN,  !!(buttons & BIT(5)));
-	input_report_key(in, BTN_DPAD_LEFT,  !!(buttons & BIT(6)));
-	input_report_key(in, BTN_DPAD_RIGHT, !!(buttons & BIT(7)));
-
-	input_report_key(in, BTN_THUMBL, !!(buttons & BIT(8)));
-	input_report_key(in, BTN_THUMBR, !!(buttons & BIT(9)));
-	input_report_key(in, BTN_TL,     !!(buttons & BIT(10)));
-	input_report_key(in, BTN_TR,     !!(buttons & BIT(11)));
-
-	input_report_key(in, BTN_TL2, !!(buttons & BIT(12)));
-	input_report_key(in, BTN_TR2, !!(buttons & BIT(13)));
-
-	input_report_key(in, BTN_START,  !!(buttons & BIT(16)));
-	input_report_key(in, BTN_SELECT, !!(buttons & BIT(17)));
-	input_report_key(in, BTN_MODE,   !!(buttons & BIT(18)));
-	input_report_key(in, BTN_MISC,   !!(buttons & BIT(19)));
+		if (sdev->caps.button_mask & BIT(b->idx))
+			input_report_key(in, b->code, !!(buttons & BIT(b->idx)));
+	}
 
 	if (sdev->caps.left_stick) {
 		input_report_abs(in, ABS_X, si_s16(data, SI_LEFT_X));
@@ -154,14 +174,16 @@ static void sinput_parse_features(struct sinput_device *sdev,
 	caps->touchpad = !!(flags1 & SI_FLAG1_TOUCHPAD);
 	caps->rgb_led  = !!(flags1 & SI_FLAG1_RGB_LED);
 
+	caps->button_mask = get_unaligned_le32(data + SI_FEAT_USAGE_MASK_0);
+
 	caps->valid = true;
 
 	hid_info(sdev->hdev,
-		 "SInput protocol v%u, poll rate %u us, sticks=%d/%d triggers=%d/%d accel=%d gyro=%d\n",
+		 "SInput protocol v%u, poll rate %u us, sticks=%d/%d triggers=%d/%d accel=%d gyro=%d buttons=0x%08x\n",
 		 caps->protocol_version, caps->polling_rate_us,
 		 caps->left_stick, caps->right_stick,
 		 caps->left_trigger, caps->right_trigger,
-		 caps->accel, caps->gyro);
+		 caps->accel, caps->gyro, caps->button_mask);
 }
 
 static int sinput_request_features(struct sinput_device *sdev)
@@ -185,6 +207,7 @@ static int sinput_request_features(struct sinput_device *sdev)
 static int sinput_input_init(struct sinput_device *sdev)
 {
 	struct input_dev *in;
+	unsigned int i;
 	int ret;
 
 	in = devm_input_allocate_device(&sdev->hdev->dev);
@@ -201,24 +224,10 @@ static int sinput_input_init(struct sinput_device *sdev)
 	__set_bit(EV_KEY, in->evbit);
 	__set_bit(EV_ABS, in->evbit);
 
-	__set_bit(BTN_EAST, in->keybit);
-	__set_bit(BTN_SOUTH, in->keybit);
-	__set_bit(BTN_NORTH, in->keybit);
-	__set_bit(BTN_WEST, in->keybit);
-	__set_bit(BTN_DPAD_UP, in->keybit);
-	__set_bit(BTN_DPAD_DOWN, in->keybit);
-	__set_bit(BTN_DPAD_LEFT, in->keybit);
-	__set_bit(BTN_DPAD_RIGHT, in->keybit);
-	__set_bit(BTN_THUMBL, in->keybit);
-	__set_bit(BTN_THUMBR, in->keybit);
-	__set_bit(BTN_TL, in->keybit);
-	__set_bit(BTN_TR, in->keybit);
-	__set_bit(BTN_TL2, in->keybit);
-	__set_bit(BTN_TR2, in->keybit);
-	__set_bit(BTN_START, in->keybit);
-	__set_bit(BTN_SELECT, in->keybit);
-	__set_bit(BTN_MODE, in->keybit);
-	__set_bit(BTN_MISC, in->keybit);
+	for (i = 0; i < ARRAY_SIZE(sinput_buttons); i++) {
+		if (sdev->caps.button_mask & BIT(sinput_buttons[i].idx))
+			__set_bit(sinput_buttons[i].code, in->keybit);
+	}
 
 	if (sdev->caps.left_stick) {
 		input_set_abs_params(in, ABS_X, -32768, 32767, 0, 0);
@@ -295,6 +304,7 @@ static int sinput_probe(struct hid_device *hdev,
 	sdev->caps.right_trigger = true;
 	sdev->caps.accel = true;
 	sdev->caps.gyro = true;
+	sdev->caps.button_mask = ~0u;
 
 	/*
 	 * Deliberately do not request HID_CONNECT_HIDINPUT. This prevents
@@ -364,6 +374,7 @@ static int sinput_raw_event(struct hid_device *hdev,
 
 static const struct hid_device_id sinput_devices[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_SINPUT, USB_DEVICE_ID_SINPUT) },
+	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_SINPUT, USB_DEVICE_ID_SINPUT) },
 	{ }
 };
 MODULE_DEVICE_TABLE(hid, sinput_devices);
