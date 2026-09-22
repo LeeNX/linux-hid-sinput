@@ -19,7 +19,12 @@
 - [x] polling-rate reporting
 
 ## 0.3 - Linux-native features
-- [ ] `power_supply`
+- [x] `power_supply` -- plug status/charge level (no capability bit; always
+      present in every state report) exposed as a standard battery
+      power_supply device (STATUS/PRESENT/CAPACITY/SCOPE). Real-hardware
+      HIL-verified: charging/discharging/no-battery all correctly mapped,
+      including a conservative default (present=0 until a real report
+      confirms otherwise). See `research.md`, 2026-09-22.
 - [ ] force feedback
 - [ ] player LED class
 - [ ] RGB LED class

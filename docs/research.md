@@ -293,3 +293,48 @@ trigger button bits individually (registration was observed via the feature
 response and the noisy soak-generator capture, but not isolated
 press/release-checked the way the four face buttons were), rumble/LEDs,
 touchpad, IMU data values, and suspend/resume.
+
+### 2026-09-22: `power_supply` integration, HIL-verified
+
+Added a standard Linux `power_supply` battery device (`POWER_SUPPLY_PROP_STATUS/
+PRESENT/CAPACITY/SCOPE`), following the `hid-playstation.c` pattern already
+flagged as a design reference. `SI_PLUG_STATUS`/`SI_CHARGE_LEVEL` have no
+capability bit in the feature response -- both bytes are always present in
+every state report, present-battery or not -- so registration doesn't depend
+on the FEATURES round-trip at all, unlike every other input this driver
+exposes.
+
+Wire semantics for `SI_PLUG_STATUS` (0=unknown, 1=no-battery, 2=charging,
+3=charged, 4=on-battery) came from the Bluepad32 HIL rig's own
+`ref-ble-gamepad/BleSInput.h`, which documents the real
+`SDL_hidapi_sinput.c HandleStatePacket` switch directly rather than trusting
+SDL's `#define` names on their own -- the same header independently flags
+SDL's `SINPUT_BUTTON_IDX_EAST/SOUTH` as "unused dead constants", which lines
+up exactly with the face-button bug found and fixed earlier today.
+
+HIL-verified against the same ESP32-BLE-Gamepad emulator: drove `battery
+<0-100>` and `power <b> <d> <c> <l>` commands over its NuS bridge and read
+back `/sys/class/power_supply/sinput-battery-*/{status,present,capacity}`.
+All three reachable states matched (`on-battery` -> discharging/present,
+`charging` -> charging/present, `no-battery` -> not-charging/absent);
+`charged` is untestable with this rig -- the emulator library's own comment
+says it never produces that value ("no dedicated signal for 'finished
+charging'"). One test-methodology trap along the way: `setPowerStateAll()`
+on the emulator only updates a separate BLE Battery-Service characteristic
+and never triggers a new SInput report by itself, so the power-state command
+needs a following `battery <n>` (which does call `sendReport()`) to actually
+flush a report carrying the change -- not a driver bug, just how that
+firmware is wired.
+
+Local review (three passes, not the CI matrix) caught three real issues
+before any of this touched hardware a second time: `POWER_SUPPLY_PROP_PRESENT`
+defaulted to true for the unconfirmed initial state (fixed to an allow-list
+of confirmed-present plug states rather than a deny-list of confirmed-absent
+ones); `SI_CHARGE_LEVEL` was trusted unclamped past the documented 0-100
+range; and `battery_lock` was `spin_lock_init()`'d inside
+`sinput_battery_init()`, which runs *after* `sinput_input_init()` already
+opens the window for `raw_event` to reach it -- the exact same class of
+"lock/flag not ready before `hid_hw_start()`" bug as the NULL `sdev->input`
+fix from earlier today, recurring in new code. Moved the lock init and
+default field values up into `sinput_probe()` alongside the `caps` defaults,
+before `hid_hw_start()`, closing the window the same way.
