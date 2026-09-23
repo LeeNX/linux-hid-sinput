@@ -421,3 +421,115 @@ call site holds the lock across its whole state-update-plus-send critical
 section instead of composing two separately-locking steps. Re-verified
 after the fix: player LED and dmesg cleanliness both re-checked on real
 hardware, no regression.
+
+### 2026-09-23: force feedback (rumble), not yet HIL-verified
+
+Added `sinput_ff.c`: an `FF_RUMBLE`-capable gamepad input device via the
+kernel's generic `input_ff_create_memless()` helper (dev, `NULL` data,
+`play_effect` callback), the same pattern several rumble-only USB/HID
+joystick drivers use (e.g. `drivers/input/joystick/xpad.c`) rather than a
+custom upload/erase implementation -- SInput's `HAPTIC` command is a
+direct, stateless "set both motors now" write with nothing on the device
+side to upload an effect into, so there is no on-device effect storage for
+a custom implementation to manage in the first place. Capability-gated on
+`caps.rumble` (an existing `struct sinput_caps` field that nothing
+consulted until now, same story `player_leds`/`rgb_led` had before
+`sinput_led.c`). A failed `input_ff_create_memless()` is logged and
+swallowed rather than failing `sinput_input_init()`/`probe()`: rumble is an
+optional enhancement, same reasoning already applied to the LEDs.
+
+Wire format for `SINPUT_CMD_HAPTIC` came from `SDL_hidapi_sinput.c`'s
+`HIDAPI_DriverSInput_RumbleJoystick()` and `HapticsType2Pack()` (fetched
+directly from `libsdl-org/SDL` via `gh api`, the same executable-reference
+approach research.md has used throughout, since the spec does not document
+output command layouts at all): SDL defines two haptic encodings, "type 1"
+(per-side frequency/amplitude pairs) and "type 2" (per-side amplitude +
+brake, for ERM-style rumble); SDL's own driver only ever sends type 2, and
+type 2 is also the only one that maps onto Linux's `FF_RUMBLE` model (one
+strong + one weak magnitude, no frequency), so only type 2 is implemented
+here. Payload: `[type=2, left_amplitude, left_brake, right_amplitude,
+right_brake]`. `strong_magnitude` (the heavy motor, per Linux's own
+`struct ff_rumble_effect` doc comment) maps to `left`, `weak_magnitude` to
+`right`, matching SDL's own `low_frequency_rumble -> left` /
+`high_frequency_rumble -> right` assignment; only the high byte of each
+16-bit Linux magnitude is sent, since the wire amplitude is 8-bit -- the
+same truncation SDL itself does (`>> 8`). Brake is always sent `0`: Linux's
+`FF_RUMBLE` model has no brake concept to source it from.
+
+Verified so far: `make check`'s new `test_haptic_command()` (byte-offset/
+constant round trip only) and the exact kernel API shapes used
+(`input_ff_create_memless()`, `input_set_capability()`, `input_get_drvdata()`/
+`input_set_drvdata()`, `struct ff_rumble_effect`) cross-checked byte-for-byte
+against `torvalds/linux`'s current `include/linux/input.h` and
+`include/uapi/linux/input.h` via `gh api`, since no kernel build environment
+was available at the time (macOS host, no `/lib/modules/*/build`) to
+compile it directly.
+
+### 2026-09-23: force feedback HIL run -- real bug found and fixed, byte-exact verification
+
+Ran the driver from the previous entry against `rp4b-ble-hil` for the first
+time. Cross-built the binary `.deb` locally via `podman` (native arm64 on
+Apple Silicon), pinned to the rig's exact running kernel
+(`linux-headers-6.18.50+rpt-rpi-v8`, trixie), following `rpi-hil.md`'s
+documented process -- built the container and the `.deb` on the build
+machine, only `scp` + `dpkg -i` on the rig itself, deliberately not
+building on the HIL server. `modinfo`/`strings` confirmed `vermagic` matched
+the running kernel exactly before shipping it over.
+
+**Real bug caught immediately on first load, before any rumble test even
+ran**: `sinput_probe()`'s "assume everything present" default-capability
+block never set `caps.rumble = true`. This rig's ESP32-BLE-Gamepad emulator
+didn't answer the FEATURES request this session (as usual, see the
+2026-09-22 entry above), so `caps.rumble` stayed at its zero-initialized
+`false`, and the live gamepad `input_dev`'s `EV` bitmap
+(`/proc/bus/input/devices`) had no `EV_FF` bit at all -- confirmed directly
+before investigating further. This is the exact same bug class the
+2026-09-22 LED entry above already found and fixed once for
+`player_leds`/`rgb_led`; it recurred here in new code because that lesson
+wasn't checked against when `sinput_ff.c` was written. Fixed by adding
+`sdev->caps.rumble = true;` to the same defaults block. Rebuilt (source
+recompile only, reusing the already-headers-provisioned container -- no
+container rebuild needed), reshipped, reloaded: `EV` bitmap became
+`20000b` (bit 21 = `EV_FF` set), and `python3-evdev`'s capability listing
+confirmed `FF_RUMBLE` (plus `FF_PERIODIC`/waveform/`FF_GAIN`, which
+`input_ff_create_memless()` always advertises together -- this driver's
+`play_effect()` only actually acts on `FF_RUMBLE`, silently no-oping
+anything else, same minimal-viable scope as SDL's own driver).
+
+**Byte-exact confirmation, and better than planned**: no `fftest`/
+`python3-evdev` were installed on the rig yet; installed both via `apt`
+(sped up with the rig's local apt-cacher-ng proxy, `192.168.101.10:3142`).
+Uploaded and played an `FF_RUMBLE` effect
+(`strong_magnitude=0xc000, weak_magnitude=0x4000`) via `python3-evdev`,
+capturing the live Bluetooth traffic with `btmon` (`stdbuf -oL btmon`,
+stopped with `SIGINT` for a clean flush -- `timeout`'s default `SIGTERM`
+truncated the capture on a first attempt). The captured `ATT: Write
+Request` to the Report Output characteristic carried
+`01 02 c0 00 40 00 00...`: `SINPUT_CMD_HAPTIC`(0x01),
+`SI_HAPTIC_TYPE_ERM`(0x02), left amplitude `0xc0`, left brake `0`, right
+amplitude `0x40`, right brake `0`, zero-padded -- exactly the encoding
+`sinput_ff.c`'s `sinput_play_effect()` computes (the SInput output report's
+own leading report-ID byte is not present on the wire for a BLE HID Report
+characteristic write, since the characteristic itself is already
+report-ID-scoped; everything from `SI_OUT_CMD` onward shifts down by one
+compared to the in-memory buffer `sinput_send_output_command()` builds).
+
+Did not need the private HIL rig's own query tooling for confirmation:
+the emulator firmware notifies unprompted on its NuS bridge whenever it
+receives a haptic command, and `btmon` captured that too, in the same
+trace, for free. Decoded from the capture: `"event rumble left=192
+right=64"` (192 = `0xc0`, 64 = `0x40` -- exact match) immediately after the
+play command, then `"event rumble left=0 right=0"` after
+`erase_effect()`, which the kernel's memless FF layer turned into one more
+`play_effect()` call with both magnitudes zeroed before removing the
+effect slot -- confirmed via the same `btmon` trace
+(`01 02 00 00 00 00 00...`). Both directions -- the exact bytes this
+driver put on the wire, and the exact values the real device firmware says
+it received -- agree, independently of each other.
+
+Force feedback is now HIL-verified to the same standard as player LED/RGB
+LED. Not yet exercised: `FF_GAIN`, effect duration/looping via the
+`Replay`/envelope fields (only raw magnitude was tested), and whether a
+real (non-emulated) SInput device's motors respond correctly -- only the
+wire bytes and the emulator's own firmware-level acknowledgment were
+confirmed here.

@@ -2,8 +2,8 @@
 /*
  * Internal shared types and cross-file entry points for the SInput driver's
  * per-subsystem source files (sinput_core.c, sinput_input.c,
- * sinput_battery.c, sinput_led.c). See sinput_protocol.h for the SInput
- * wire-format constants these subsystems decode/encode.
+ * sinput_battery.c, sinput_led.c, sinput_ff.c). See sinput_protocol.h for
+ * the SInput wire-format constants these subsystems decode/encode.
  */
 
 #ifndef SINPUT_H
@@ -96,13 +96,15 @@ struct sinput_device {
 
 	/*
 	 * Set (under output_lock) before hid_hw_stop() is called, on every
-	 * path that calls it. devm doesn't unregister the LED classdevs
-	 * until after sinput_remove() returns, and led_classdev_unregister()
-	 * synchronously drives brightness to LED_OFF via flush_work() at
-	 * that point -- i.e. our own brightness_set_blocking callbacks can
-	 * still fire after hid_hw_stop() already ran. sinput_send_output_
-	 * command() checks this and bails out instead of calling into an
-	 * already-stopped HID transport.
+	 * path that calls it. devm doesn't unregister the LED classdevs (or
+	 * the FF-capable gamepad input_dev) until after sinput_remove()
+	 * returns, and both led_classdev_unregister() (via flush_work()) and
+	 * input_unregister_device()'s FF teardown can still synchronously
+	 * drive one more brightness_set_blocking/play_effect callback at
+	 * that point -- i.e. our own output-command callbacks can still fire
+	 * after hid_hw_stop() already ran. sinput_send_output_command()
+	 * checks this and bails out instead of calling into an already-
+	 * stopped HID transport.
 	 */
 	bool removing;
 
@@ -132,5 +134,14 @@ void sinput_battery_update(struct sinput_device *sdev, const u8 *data);
 
 /* sinput_led.c: player LED + RGB LED, both capability-gated. */
 int sinput_led_init(struct sinput_device *sdev);
+
+/*
+ * sinput_ff.c: force feedback (rumble), capability-gated on caps.rumble.
+ * Must be called on the gamepad input_dev before input_register_device(),
+ * from sinput_input_init() -- see sinput_ff.c's header comment. Failure is
+ * logged and swallowed (rumble is an optional enhancement, same as the
+ * LEDs), so this never fails its caller.
+ */
+int sinput_ff_init(struct sinput_device *sdev, struct input_dev *in);
 
 #endif /* SINPUT_H */

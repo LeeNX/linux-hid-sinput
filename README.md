@@ -63,17 +63,21 @@ The module:
    device (always present in every state report, no capability bit);
 9. exposes player LEDs (4 on/off `led_classdev`s) and an RGB indicator
    (`led_classdev_multicolor`) as output commands, gated on the feature
-   response the same way the input side is.
+   response the same way the input side is;
+10. exposes rumble as a standard `FF_RUMBLE` force-feedback device
+    (`input_ff_create_memless()`), gated on `caps.rumble` -- HIL-verified
+    against real hardware: captured BLE traffic showed the exact expected
+    output-report bytes (see [`docs/research.md`](docs/research.md)).
 
 The source lives in `src/`, one file per subsystem (`sinput_core.c` for
 probe/dispatch and the FEATURES/output-command plumbing, `sinput_input.c`,
-`sinput_battery.c`, `sinput_led.c`), Kbuild-linked into a single `sinput.ko`
--- see `src/Makefile`.
+`sinput_battery.c`, `sinput_led.c`, `sinput_ff.c`), Kbuild-linked into a
+single `sinput.ko` -- see `src/Makefile`.
 
-Rumble and touchpads are intentionally left as follow-up work. The
-feature-response layout
-is reverse-derived from SDL's SInput HIDAPI driver (see [`docs/research.md`](docs/research.md)),
-not from a stable spec, so treat the byte offsets as best-effort.
+Touchpads are intentionally left as follow-up work. The feature-response
+layout is reverse-derived from SDL's SInput HIDAPI driver (see
+[`docs/research.md`](docs/research.md)), not from a stable spec, so treat
+the byte offsets as best-effort.
 
 ## Why a kernel driver?
 
@@ -153,6 +157,11 @@ Both scripts are plain POSIX `sh`, no `dh`/`dpkg-buildpackage` involved —
 current Debian (verified against 3.0.10); the doc is stale.
 
 ## CI
+
+GitHub is the canonical public repo. [GitLab](https://gitlab.com/leet/linux-hid-sinput)
+is a public mirror. Gitea is a self-hosted, internal mirror (also used for
+local CI and for reaching self-hosted ARM64 hardware, including the
+Raspberry Pi HIL runner) rather than a public home for the project.
 
 Three separate CI configs, one per platform this repo can be pushed to —
 [`.gitea/workflows/ci.yml`](.gitea/workflows/ci.yml), [`.github/workflows/ci.yml`](.github/workflows/ci.yml), [`.gitlab-ci.yml`](.gitlab-ci.yml) —
@@ -276,7 +285,9 @@ feature set as evidence that SInput is ready for upstream Linux.
       every mapped button exists" like the other capabilities)
 * [x] battery / `power_supply` (HIL-verified against real hardware; see
       [`docs/research.md`](docs/research.md))
-* [ ] force feedback / rumble output command
+* [x] force feedback / rumble output command (`FF_RUMBLE` via
+      `input_ff_create_memless()`, HIL-verified against real hardware; see
+      [`docs/research.md`](docs/research.md))
 * [x] player LEDs (HIL-verified against real hardware; see
       [`docs/research.md`](docs/research.md))
 * [x] RGB LED (HIL-verified against real hardware; see

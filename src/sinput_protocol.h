@@ -72,6 +72,24 @@
 #define SINPUT_CMD_RGB_LED    0x04
 
 /*
+ * SINPUT_CMD_HAPTIC payload. SDL_hidapi_sinput.c defines two haptic
+ * encodings: "type 1" (per-side frequency/amplitude pairs, for precise
+ * waveform haptics) and "type 2" (per-side amplitude+brake, for
+ * traditional ERM-motor-style rumble). SDL's own driver only ever sends
+ * type 2 (HIDAPI_DriverSInput_RumbleJoystick() / HapticsType2Pack()); this
+ * is also the only encoding that maps directly onto Linux's FF_RUMBLE
+ * model (one strong + one weak magnitude, no per-side frequency), so this
+ * driver only implements type 2. As with PLAYER_LED/RGB_LED, the spec does
+ * not document this layout at all -- trust SDL's send site over guessing.
+ */
+#define SI_HAPTIC_TYPE_ERM        2
+#define SI_OUT_HAPTIC_TYPE        2
+#define SI_OUT_HAPTIC_LEFT_AMP    3
+#define SI_OUT_HAPTIC_LEFT_BRAKE  4
+#define SI_OUT_HAPTIC_RIGHT_AMP   5
+#define SI_OUT_HAPTIC_RIGHT_BRAKE 6
+
+/*
  * Output report (SINPUT_REPORT_ID_OUTPUT) payload offsets, report ID at
  * byte 0, command byte (one of SINPUT_CMD_*) at SI_OUT_CMD. Confirmed
  * against leenx-foss/Bluepad32/hil's ref-ble-gamepad/BleSInput.cpp's

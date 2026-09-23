@@ -155,7 +155,25 @@ int sinput_input_init(struct sinput_device *sdev)
 	if (sdev->caps.right_trigger)
 		input_set_abs_params(in, ABS_RZ, -32768, 32767, 0, 0);
 
+	/*
+	 * Needed by sinput_ff_init()'s play_effect callback to get back from
+	 * this input_dev to sdev. Must be set before input_register_device()
+	 * -- same requirement as input_ff_create_memless() below the FF core
+	 * relies on it once effects can actually be uploaded/played.
+	 */
+	input_set_drvdata(in, sdev);
+
 	sdev->input = in;
+
+	/*
+	 * Must run before input_register_device(): input_ff_create_memless()
+	 * sets up dev->ff and hooks dev->flush, which the FF core only wires
+	 * in correctly if done ahead of registration.
+	 */
+	ret = sinput_ff_init(sdev, in);
+	if (ret)
+		return ret;
+
 	ret = input_register_device(in);
 	if (ret)
 		return ret;
