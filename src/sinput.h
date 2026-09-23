@@ -94,6 +94,18 @@ struct sinput_device {
 	 */
 	struct mutex output_lock;
 
+	/*
+	 * Set (under output_lock) before hid_hw_stop() is called, on every
+	 * path that calls it. devm doesn't unregister the LED classdevs
+	 * until after sinput_remove() returns, and led_classdev_unregister()
+	 * synchronously drives brightness to LED_OFF via flush_work() at
+	 * that point -- i.e. our own brightness_set_blocking callbacks can
+	 * still fire after hid_hw_stop() already ran. sinput_send_output_
+	 * command() checks this and bails out instead of calling into an
+	 * already-stopped HID transport.
+	 */
+	bool removing;
+
 	/* Player LEDs: N on/off led_classdevs, translated to a single wire
 	 * number (see SI_OUT_PLAYER_LED_NUM in sinput_protocol.h). Bit i of
 	 * player_leds_state is player_leds[i]'s on/off state.

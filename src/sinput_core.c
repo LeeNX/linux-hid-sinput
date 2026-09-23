@@ -92,6 +92,15 @@ int sinput_send_output_command(struct sinput_device *sdev, u8 cmd,
 
 	lockdep_assert_held(&sdev->output_lock);
 
+	/*
+	 * hid_hw_stop() may already have run (see sdev->removing's comment
+	 * in sinput.h): an LED's brightness_set_blocking driven by
+	 * led_classdev_unregister()'s own flush_work() during devm teardown
+	 * can still reach here after that. Don't touch the stopped transport.
+	 */
+	if (sdev->removing)
+		return -ENODEV;
+
 	if (payload_len > SINPUT_OUTPUT_REPORT_SIZE - (SI_OUT_CMD + 1))
 		return -EINVAL;
 
@@ -221,12 +230,38 @@ static int sinput_probe(struct hid_device *hdev,
 	return 0;
 
 stop:
+	/*
+	 * No LED can be registered yet on this path (sinput_led_init() is
+	 * the last init step and never jumps here itself), but set the flag
+	 * before hid_hw_stop() on every path that calls it anyway -- keeps
+	 * the invariant true regardless of future reordering in this function.
+	 */
+	mutex_lock(&sdev->output_lock);
+	sdev->removing = true;
+	mutex_unlock(&sdev->output_lock);
+
 	hid_hw_stop(hdev);
 	return ret;
 }
 
 static void sinput_remove(struct hid_device *hdev)
 {
+	struct sinput_device *sdev = hid_get_drvdata(hdev);
+
+	/*
+	 * Must happen before hid_hw_stop(): devm doesn't unregister the LED
+	 * classdevs until after this function returns, and
+	 * led_classdev_unregister() synchronously drives brightness to
+	 * LED_OFF via flush_work() at that point, which can still call back
+	 * into sinput_send_output_command() -- see sdev->removing's comment
+	 * in sinput.h. Setting this under output_lock, before stopping the
+	 * transport, is what lets that callback see it and bail out cleanly
+	 * (-ENODEV) instead of touching a stopped transport.
+	 */
+	mutex_lock(&sdev->output_lock);
+	sdev->removing = true;
+	mutex_unlock(&sdev->output_lock);
+
 	/*
 	 * Deliberately no mutex_destroy(&sdev->output_lock) here: sdev and
 	 * the LED classdevs are devm-managed and only actually torn down
