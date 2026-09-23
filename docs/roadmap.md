@@ -25,7 +25,15 @@
       HIL-verified: charging/discharging/no-battery all correctly mapped,
       including a conservative default (present=0 until a real report
       confirms otherwise). See `research.md`, 2026-09-22.
-- [ ] force feedback
+- [x] force feedback -- `sinput_ff.c`, `FF_RUMBLE` via
+      `input_ff_create_memless()`, capability-gated on `caps.rumble`.
+      HIL-verified against `rp4b-ble-hil`: captured BLE traffic showed the
+      exact expected output-report bytes, and the emulator's own
+      unprompted NuS notification confirmed the same values received. Also
+      caught and fixed a real bug this HIL run: `caps.rumble` was missing
+      from `sinput_probe()`'s default-capability block, the same class of
+      bug already fixed once for player/RGB LED. See `research.md`,
+      2026-09-23.
 - [x] player LED class -- N (4) on/off `led_classdev`s, PlayStation-style,
       translated to SInput's single scalar "player number" wire value via
       `hweight8()` of which LEDs are lit. HIL-verified: emulator's `led?`

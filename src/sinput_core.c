@@ -146,12 +146,24 @@ static int sinput_probe(struct hid_device *hdev,
 
 	/*
 	 * Until a feature response says otherwise, assume every axis, the
-	 * IMU, and both LEDs are present. This preserves today's behaviour
-	 * for devices that do not implement the SInput command/feature
-	 * protocol, such as the generic bring-up test ID. Harmless for the
-	 * LEDs even if wrong: worst case is an LED class device userspace can
-	 * toggle that a real device without that LED silently ignores, unlike
-	 * assuming an axis that isn't really there and misreading garbage.
+	 * IMU, and every output command (LEDs, rumble) are present. This
+	 * preserves today's behaviour for devices that do not implement the
+	 * SInput command/feature protocol, such as the generic bring-up test
+	 * ID -- and, in practice, this HIL rig's own ESP32-BLE-Gamepad
+	 * emulator, which usually never answers FEATURES either (see
+	 * docs/research.md). Harmless for LEDs/rumble even if wrong: worst
+	 * case is an output command userspace can send that a real device
+	 * without that feature silently ignores, unlike assuming an axis
+	 * that isn't really there and misreading garbage.
+	 *
+	 * caps.rumble was missing from this block when sinput_ff.c was first
+	 * added -- every other output-command capability (player_leds,
+	 * rgb_led) had already been caught missing here once before (see
+	 * docs/research.md, 2026-09-22) and fixed the same way; this is that
+	 * same bug recurring in new code, caught this time by an actual HIL
+	 * run against rp4b-ble-hil rather than by review (see docs/research.md,
+	 * 2026-09-23): FEATURES timed out as usual, and the live gamepad
+	 * input device's EV bitmap had no EV_FF bit at all.
 	 */
 	sdev->caps.left_stick = true;
 	sdev->caps.right_stick = true;
@@ -159,6 +171,7 @@ static int sinput_probe(struct hid_device *hdev,
 	sdev->caps.right_trigger = true;
 	sdev->caps.accel = true;
 	sdev->caps.gyro = true;
+	sdev->caps.rumble = true;
 	sdev->caps.player_leds = true;
 	sdev->caps.rgb_led = true;
 	sdev->caps.button_mask = ~0u;
@@ -240,6 +253,16 @@ stop:
 	sdev->removing = true;
 	mutex_unlock(&sdev->output_lock);
 
+	/*
+	 * Safe even if sinput_ff_init() was never reached on this path
+	 * (e.g. devm_input_allocate_device() itself failed first): sdev is
+	 * devm_kzalloc'd, and cancel_work_sync() on a zeroed, never-
+	 * INIT_WORK()'d work_struct is a safe no-op -- it only ever consults
+	 * the PENDING bit, which is 0 either way. See sdev->ff_lock's
+	 * comment in sinput.h for why this exists at all.
+	 */
+	cancel_work_sync(&sdev->ff_work);
+
 	hid_hw_stop(hdev);
 	return ret;
 }
@@ -261,6 +284,16 @@ static void sinput_remove(struct hid_device *hdev)
 	mutex_lock(&sdev->output_lock);
 	sdev->removing = true;
 	mutex_unlock(&sdev->output_lock);
+
+	/*
+	 * Also before hid_hw_stop(): waits out any ff_work already running
+	 * (from a play_effect() that fired just before "removing" was set
+	 * above) and cancels anything merely queued, so no more rumble sends
+	 * happen once the transport is about to go down and no work item is
+	 * left referencing sdev past this point. See sdev->ff_lock's comment
+	 * in sinput.h.
+	 */
+	cancel_work_sync(&sdev->ff_work);
 
 	/*
 	 * Deliberately no mutex_destroy(&sdev->output_lock) here: sdev and
@@ -319,6 +352,8 @@ static struct hid_driver sinput_driver = {
 
 module_hid_driver(sinput_driver);
 
-MODULE_AUTHOR("LeeNX");
+MODULE_AUTHOR("LeeNX <clinton.lee.taylor@gmail.com>");
 MODULE_DESCRIPTION("Experimental Linux HID driver for SInput gamepads");
 MODULE_LICENSE("GPL");
+/* See src/Makefile's SINPUT_VERSION comment: sourced from dkms.conf, not hand-duplicated here. */
+MODULE_VERSION(SINPUT_VERSION);

@@ -220,6 +220,35 @@ static void test_rgb_led_command(void)
 	CHECK(SI_OUT_RGB_BLUE < SINPUT_OUTPUT_REPORT_SIZE, "RGB blue field overruns report");
 }
 
+static void test_haptic_command(void)
+{
+	uint8_t pkt[SINPUT_OUTPUT_REPORT_SIZE] = { 0 };
+
+	pkt[0] = SINPUT_REPORT_ID_OUTPUT;
+	pkt[SI_OUT_CMD] = SINPUT_CMD_HAPTIC;
+	pkt[SI_OUT_HAPTIC_TYPE] = SI_HAPTIC_TYPE_ERM;
+	/* strong_magnitude 0xC000 -> left amplitude 0xC0 (top byte only). */
+	pkt[SI_OUT_HAPTIC_LEFT_AMP] = 0xc0;
+	pkt[SI_OUT_HAPTIC_LEFT_BRAKE] = 0;
+	/* weak_magnitude 0x4000 -> right amplitude 0x40. */
+	pkt[SI_OUT_HAPTIC_RIGHT_AMP] = 0x40;
+	pkt[SI_OUT_HAPTIC_RIGHT_BRAKE] = 0;
+
+	CHECK(pkt[SI_OUT_CMD] == SINPUT_CMD_HAPTIC, "haptic command byte mismatch");
+	CHECK(pkt[SI_OUT_HAPTIC_TYPE] == SI_HAPTIC_TYPE_ERM, "haptic type mismatch");
+	CHECK(pkt[SI_OUT_HAPTIC_LEFT_AMP] == 0xc0, "left amplitude mismatch");
+	CHECK(pkt[SI_OUT_HAPTIC_RIGHT_AMP] == 0x40, "right amplitude mismatch");
+
+	/* Offsets must be distinct byte positions and stay inside the report. */
+	CHECK(SI_OUT_HAPTIC_TYPE != SI_OUT_HAPTIC_LEFT_AMP &&
+	      SI_OUT_HAPTIC_LEFT_AMP != SI_OUT_HAPTIC_LEFT_BRAKE &&
+	      SI_OUT_HAPTIC_LEFT_BRAKE != SI_OUT_HAPTIC_RIGHT_AMP &&
+	      SI_OUT_HAPTIC_RIGHT_AMP != SI_OUT_HAPTIC_RIGHT_BRAKE,
+	      "haptic payload offsets overlap");
+	CHECK(SI_OUT_HAPTIC_RIGHT_BRAKE < SINPUT_OUTPUT_REPORT_SIZE,
+	      "haptic payload overruns report");
+}
+
 int main(void)
 {
 	test_state_report();
@@ -228,6 +257,7 @@ int main(void)
 	test_output_report_layout();
 	test_player_led_command();
 	test_rgb_led_command();
+	test_haptic_command();
 
 	if (failures) {
 		fprintf(stderr, "%d check(s) failed\n", failures);

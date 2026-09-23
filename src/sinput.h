@@ -2,8 +2,8 @@
 /*
  * Internal shared types and cross-file entry points for the SInput driver's
  * per-subsystem source files (sinput_core.c, sinput_input.c,
- * sinput_battery.c, sinput_led.c). See sinput_protocol.h for the SInput
- * wire-format constants these subsystems decode/encode.
+ * sinput_battery.c, sinput_led.c, sinput_ff.c). See sinput_protocol.h for
+ * the SInput wire-format constants these subsystems decode/encode.
  */
 
 #ifndef SINPUT_H
@@ -18,6 +18,7 @@
 #include <linux/power_supply.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
+#include <linux/workqueue.h>
 
 /* Universal 4-player convention (Xbox/PS/Switch); no SInput spec says a fixed N. */
 #define SINPUT_NUM_PLAYER_LEDS 4
@@ -96,13 +97,20 @@ struct sinput_device {
 
 	/*
 	 * Set (under output_lock) before hid_hw_stop() is called, on every
-	 * path that calls it. devm doesn't unregister the LED classdevs
-	 * until after sinput_remove() returns, and led_classdev_unregister()
-	 * synchronously drives brightness to LED_OFF via flush_work() at
-	 * that point -- i.e. our own brightness_set_blocking callbacks can
-	 * still fire after hid_hw_stop() already ran. sinput_send_output_
-	 * command() checks this and bails out instead of calling into an
-	 * already-stopped HID transport.
+	 * path that calls it. devm doesn't unregister the LED classdevs (or
+	 * the FF-capable gamepad input_dev) until after sinput_remove()
+	 * returns, and both led_classdev_unregister() (via flush_work()) and
+	 * input_unregister_device()'s FF teardown can still drive one more
+	 * brightness_set_blocking call, or schedule one more ff_work run via
+	 * play_effect(), at that point -- i.e. our own output-command sends
+	 * can still happen after hid_hw_stop() already ran.
+	 * sinput_send_output_command() checks this and bails out instead of
+	 * calling into an already-stopped HID transport. sinput_remove()
+	 * also cancel_work_sync()s ff_work itself, both to avoid leaking a
+	 * queued item and to close the window before this flag is even
+	 * checked; this comment's residual "can still fire after hid_hw_stop()"
+	 * case is deliberately not chased further than that, same risk
+	 * posture as the LED classdevs already accept.
 	 */
 	bool removing;
 
@@ -115,6 +123,24 @@ struct sinput_device {
 
 	/* RGB indicator LED. */
 	struct led_classdev_mc rgb_led;
+
+	/*
+	 * Force feedback. sinput_play_effect() (sinput_ff.c) is invoked by
+	 * the kernel's ff-memless helper with dev->event_lock held as a
+	 * spinlock -- with IRQs disabled, in the case of ml_effect_timer()'s
+	 * periodic re-arm -- never from a sleepable context, despite the
+	 * "workqueue context" this driver originally assumed (wrong; caught
+	 * by real review, see docs/research.md). output_lock is a mutex and
+	 * sinput_send_output_command() allocates with GFP_KERNEL and can
+	 * block in hid_hw_output_report(), none of which is safe there. So
+	 * play_effect() only records the latest requested magnitudes here
+	 * (under ff_lock, a plain spinlock safe to take from either context)
+	 * and schedules ff_work to do the real send from process context.
+	 */
+	spinlock_t ff_lock;
+	u16 ff_strong_magnitude;
+	u16 ff_weak_magnitude;
+	struct work_struct ff_work;
 };
 
 /* sinput_core.c */
@@ -132,5 +158,14 @@ void sinput_battery_update(struct sinput_device *sdev, const u8 *data);
 
 /* sinput_led.c: player LED + RGB LED, both capability-gated. */
 int sinput_led_init(struct sinput_device *sdev);
+
+/*
+ * sinput_ff.c: force feedback (rumble), capability-gated on caps.rumble.
+ * Must be called on the gamepad input_dev before input_register_device(),
+ * from sinput_input_init() -- see sinput_ff.c's header comment. Failure is
+ * logged and swallowed (rumble is an optional enhancement, same as the
+ * LEDs), so this never fails its caller.
+ */
+int sinput_ff_init(struct sinput_device *sdev, struct input_dev *in);
 
 #endif /* SINPUT_H */

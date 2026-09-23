@@ -39,7 +39,8 @@ Section: kernel
 Priority: optional
 Architecture: ${ARCH}
 Depends: dkms (>= 2.2.0.3~)
-Maintainer: LeeNX
+Maintainer: LeeNX <clinton.lee.taylor@gmail.com>
+Homepage: https://github.com/LeeNX/linux-hid-sinput
 Description: SInput HID kernel module source for DKMS
  Experimental out-of-tree SInput HID driver, packaged for DKMS. Rebuilds
  automatically against whatever kernel is running, including after
