@@ -8,10 +8,9 @@ precompiled Raspberry Pi 3 binary package
 [`scripts/build-binary-deb.sh`](scripts/build-binary-deb.sh) — see
 [`docs/rpi-hil.md`](docs/rpi-hil.md)). How those two files actually reach a
 release differs by platform (see "What happens after the tag is pushed"
-below) — GitHub automates it fully, Gitea builds the files but stops short
-of publishing them for a network reason specific to that runner, and GitLab
-has no release automation at all (see [`.gitlab-ci.yml`](.gitlab-ci.yml)'s
-own CI, which is separate from this).
+below) — GitHub and GitLab both automate it fully, while Gitea builds the
+files but stops short of publishing them for a network reason specific to
+that runner.
 
 The one canonical version source is [`dkms.conf`](dkms.conf)'s
 `PACKAGE_VERSION` — there's no second manifest file to keep in sync (unlike
@@ -53,26 +52,35 @@ commit history that remote actually has.
 ### Prereleases
 
 A version with a semver pre-release suffix, e.g. `0.1.0-rc0`
-(`scripts/release.sh 0.1.0-rc0`), is tagged and built the same way, but both
-release workflows detect the `-` suffix and mark the Release as a
-prerelease.
+(`scripts/release.sh 0.1.0-rc0`), is tagged and built the same way, and the
+GitHub release workflow detects the `-` suffix and marks the Release as a
+prerelease. GitLab's Releases API has no equivalent prerelease flag, so its
+release job creates a normal Release either way.
 
 ## What happens after the tag is pushed
 
 Pushing the tag (alongside the branch, which `scripts/release.sh` also
 pushes) triggers two things independently:
 
-* The normal CI workflows (`.gitea/workflows/ci.yml` /
-  `.github/workflows/ci.yml`) run on the branch push, same as any other
-  commit to `main` — `checkpatch`, the kernel-build matrix, the real
-  `dpkg -i`/`dpkg -r` dkms regression test, and so on.
-* `.gitea/workflows/release.yml` and `.github/workflows/release.yml` run on
-  the tag push. Both verify `dkms.conf`'s `PACKAGE_VERSION` matches the tag
+* The normal CI (`.gitea/workflows/ci.yml`, `.github/workflows/ci.yml`, and
+  the `test`-stage jobs in `.gitlab-ci.yml`) runs on the branch push, same
+  as any other commit to `main` — `checkpatch`, the kernel-build matrix, the
+  real `dpkg -i`/`dpkg -r` dkms regression test, and so on.
+* The tag push itself triggers `.gitea/workflows/release.yml`,
+  `.github/workflows/release.yml`, and the `release` job in
+  `.gitlab-ci.yml` (skipping that pipeline's own `test`-stage jobs — see
+  the `.skip-on-tag` anchor there — since the branch push already ran
+  them). All three verify `dkms.conf`'s `PACKAGE_VERSION` matches the tag
   (fails fast if a tag was created some other way) and build both `.deb`
   files, then diverge:
   * **GitHub** generates release notes from `git log` since the previous
     tag, creates the Release via the REST API (using the auto-issued
     `GITHUB_TOKEN`, no secret to create), and uploads both files as assets.
+  * **GitLab** does the same via its own Releases API and Generic Package
+    Registry, authenticating with the auto-issued `CI_JOB_TOKEN` (no secret
+    to create there either) — the `.deb` files are uploaded to the Generic
+    Package Registry first, then linked onto the Release as assets, since
+    GitLab has no per-release upload URL the way GitHub's response does.
   * **Gitea** uploads both `.deb` files plus the generated release notes as
     a plain downloadable workflow artifact instead of creating the Release
     automatically. This Gitea instance's job containers can reach the
@@ -87,11 +95,11 @@ pushes) triggers two things independently:
     already-pushed tag in the Gitea web UI, paste in `release-notes.md`,
     and attach the two `.deb` files.
 
-These two workflows are deliberately **not** chained to the main CI
-workflow (e.g. via `workflow_run`) — they don't re-verify the dkms
-install/remove cycle themselves, they rely on the CI workflow triggered by
-the same branch push to be the actual correctness gate. If you want to be
-sure CI passed before trusting a release's assets, check the CI run for
+These release jobs are deliberately **not** chained to the main CI workflow
+(e.g. via `workflow_run`/`needs` across pipelines) — they don't re-verify
+the dkms install/remove cycle themselves, they rely on the CI run triggered
+by the same branch push to be the actual correctness gate. If you want to
+be sure CI passed before trusting a release's assets, check the CI run for
 that commit separately.
 
 ## Credentials needed
@@ -105,6 +113,14 @@ that commit separately.
 * **GitHub**: nothing to create. `.github/workflows/release.yml` uses the
   `GITHUB_TOKEN` every workflow run gets automatically, scoped by the
   `permissions: contents: write` block in that file.
+* **GitLab**: nothing to create either, as long as this project's CI/CD job
+  token permissions are left at their default (unrestricted access to its
+  own project's API). The `release` job in `.gitlab-ci.yml` uses the
+  auto-issued `CI_JOB_TOKEN` against the Releases API and Generic Package
+  Registry. If "Limit access to this project" job-token restrictions ever
+  get enabled (Settings > CI/CD > Job token permissions), that job will
+  start failing with 403/404s and would need an explicit allowlist entry
+  for its own project, or a `RELEASE_TOKEN` PAT as a fallback.
 
 ## What went wrong on the first real release, and what's still unverified
 

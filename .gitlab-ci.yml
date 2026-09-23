@@ -19,9 +19,25 @@
 stages:
   - test
   - build
+  - release
 
 workflow:
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_COMMIT_TAG'
+
+# Skips the four `test` jobs below on a tag pipeline: the tag's commit
+# already ran the full suite on the `main` branch push that (normally)
+# preceded it, same reasoning as .github/workflows/release.yml and
+# .gitea/workflows/release.yml not re-running CI. A tag pipeline only
+# needs to rebuild the two release artifacts (build stage, unrestricted
+# below) and publish the release (release stage).
+.skip-on-tag: &skip-on-tag
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_PIPELINE_SOURCE == "web"'
@@ -29,6 +45,7 @@ workflow:
 protocol-check:
   stage: test
   image: debian:bookworm
+  <<: *skip-on-tag
   script:
     - apt-get update -qq && apt-get install -y -qq build-essential
     - make check
@@ -36,6 +53,7 @@ protocol-check:
 shellcheck:
   stage: test
   image: koalaman/shellcheck-alpine:stable
+  <<: *skip-on-tag
   script:
     - shellcheck scripts/*.sh
 
@@ -48,6 +66,7 @@ shellcheck:
 checkpatch:
   stage: test
   image: debian:bookworm
+  <<: *skip-on-tag
   script:
     - apt-get update -qq && apt-get install -y -qq perl wget
     - mkdir -p /tmp/checkpatch
@@ -67,6 +86,7 @@ checkpatch:
 kernel-build:
   stage: test
   image: debian:$RELEASE
+  <<: *skip-on-tag
   parallel:
     matrix:
       - RELEASE: [bookworm, trixie]
@@ -153,3 +173,82 @@ rpi3-binary-deb:
   artifacts:
     paths:
       - out/*.deb
+
+# Mirrors .github/workflows/release.yml's release job: verify the tag
+# against dkms.conf, generate release notes from git log since the
+# previous tag, create the Release, and attach both .deb files -- but
+# through GitLab's own Releases API and Generic Package Registry
+# instead of GitHub's REST API, since neither surface carries over.
+#
+# Auth uses $CI_JOB_TOKEN, not a manually created secret: GitLab's
+# Releases API and Generic Package Registry both accept the job token
+# for read/write access to their own project, the same convenience
+# .github/workflows/release.yml gets from GITHUB_TOKEN. If this project
+# has "Limit access to this project" CI/CD job-token restrictions
+# enabled, or the Releases feature is otherwise locked down, these calls
+# will 403/404 instead -- check Settings > CI/CD > Job token permissions
+# first if so.
+#
+# GIT_DEPTH: 0 overrides GitLab's default shallow clone -- needed for
+# `git describe --tags` and `git log <prev-tag>..HEAD` below to see any
+# tag/commit history at all, same reason .github/workflows/release.yml
+# passes fetch-depth: 0 to actions/checkout.
+#
+# Assets are uploaded to the Generic Package Registry first (its upload
+# URL doubles as the download URL), then linked onto the Release --
+# unlike GitHub, which returns a per-release upload_url to POST assets
+# to directly.
+release:
+  stage: release
+  image: debian:trixie
+  needs:
+    - dkms-source-deb
+    - rpi3-binary-deb
+  variables:
+    GIT_DEPTH: 0
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates jq git
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - |
+      tag="$CI_COMMIT_TAG"
+      version="${tag#v}"
+      conf_version=$(grep -m1 '^PACKAGE_VERSION=' dkms.conf | cut -d'"' -f2)
+      if [ "$conf_version" != "$version" ]; then
+        echo "tag $tag doesn't match dkms.conf PACKAGE_VERSION=$conf_version" >&2
+        exit 1
+      fi
+    - |
+      prev_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+      if [ -n "$prev_tag" ]; then
+        git log --pretty=format:'* %s (%h)' "${prev_tag}..HEAD" > /tmp/notes.md
+      else
+        git log --pretty=format:'* %s (%h)' HEAD > /tmp/notes.md
+      fi
+    - |
+      # Idempotent, same reasoning as the GitHub job: reuse an existing
+      # release for this tag instead of failing on a second POST if an
+      # earlier run got partway through (e.g. release created, then an
+      # asset upload failed).
+      body=$(jq -Rs . < /tmp/notes.md)
+      existing=$(curl -fsSL "$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases/$tag" \
+        -H "JOB-TOKEN: $CI_JOB_TOKEN" 2>/dev/null || true)
+      if [ -n "$existing" ] && printf '%s' "$existing" | jq -e '.tag_name' >/dev/null 2>&1; then
+        echo "Release $tag already exists, reusing it."
+      else
+        curl -fsSL -X POST "$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases" \
+          -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{\"tag_name\": \"$tag\", \"name\": \"$tag\", \"description\": $body}"
+      fi
+    - |
+      for f in out/*.deb; do
+        name=$(basename "$f")
+        url="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/sinput-dkms/$tag/$name"
+        curl -fsSL --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$f" "$url"
+        curl -fsSL -X POST "$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases/$tag/assets/links" \
+          -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{\"name\": \"$name\", \"url\": \"$url\", \"link_type\": \"package\"}"
+      done
