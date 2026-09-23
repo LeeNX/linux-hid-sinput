@@ -152,21 +152,23 @@ static int sinput_rgb_led_init(struct sinput_device *sdev)
 	return ret;
 }
 
+/*
+ * Attempts both LED types independently -- one failing (e.g. a kernel
+ * without CONFIG_LEDS_CLASS_MULTICOLOR) must not skip the other. Both
+ * sinput_player_leds_init()/sinput_rgb_led_init() already hid_err() their
+ * own failures; the return value here is informational only. Callers
+ * should treat LEDs as optional and never abort device setup over this --
+ * see the comment at the call site in sinput_probe().
+ */
 int sinput_led_init(struct sinput_device *sdev)
 {
-	int ret;
+	int player_ret = 0, rgb_ret = 0;
 
-	if (sdev->caps.player_leds) {
-		ret = sinput_player_leds_init(sdev);
-		if (ret)
-			return ret;
-	}
+	if (sdev->caps.player_leds)
+		player_ret = sinput_player_leds_init(sdev);
 
-	if (sdev->caps.rgb_led) {
-		ret = sinput_rgb_led_init(sdev);
-		if (ret)
-			return ret;
-	}
+	if (sdev->caps.rgb_led)
+		rgb_ret = sinput_rgb_led_init(sdev);
 
-	return 0;
+	return player_ret ? player_ret : rgb_ret;
 }

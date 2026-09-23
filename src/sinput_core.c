@@ -207,9 +207,15 @@ static int sinput_probe(struct hid_device *hdev,
 			goto stop;
 	}
 
-	ret = sinput_led_init(sdev);
-	if (ret)
-		goto stop;
+	/*
+	 * Not fatal to probe(): LEDs are an optional enhancement (same
+	 * reasoning as the battery's power_supply_powers() topology link).
+	 * A kernel without CONFIG_LEDS_CLASS_MULTICOLOR, or any other LED
+	 * registration failure, should not cost the user their gamepad,
+	 * IMU, and battery over an RGB indicator. sinput_led_init() logs
+	 * the details itself.
+	 */
+	sinput_led_init(sdev);
 
 	hid_info(hdev, "SInput driver attached (experimental)\n");
 	return 0;
@@ -221,10 +227,17 @@ stop:
 
 static void sinput_remove(struct hid_device *hdev)
 {
-	struct sinput_device *sdev = hid_get_drvdata(hdev);
-
+	/*
+	 * Deliberately no mutex_destroy(&sdev->output_lock) here: sdev and
+	 * the LED classdevs are devm-managed and only actually torn down
+	 * *after* this function returns, so LED sysfs files (and their
+	 * brightness_set_blocking callbacks, which take output_lock) are
+	 * still live at this point. Destroying the mutex here would be a
+	 * real use-after-destroy race against a concurrent sysfs write, not
+	 * just the debug-build lockdep nicety it looks like -- worse than
+	 * the missing-destroy gap it was meant to fix.
+	 */
 	hid_hw_stop(hdev);
-	mutex_destroy(&sdev->output_lock);
 }
 
 static int sinput_raw_event(struct hid_device *hdev,
