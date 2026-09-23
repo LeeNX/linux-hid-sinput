@@ -38,7 +38,8 @@ Version: ${PACKAGE_VERSION}
 Section: kernel
 Priority: optional
 Architecture: ${ARCH}
-Maintainer: LeeNX
+Maintainer: LeeNX <clinton.lee.taylor@gmail.com>
+Homepage: https://github.com/LeeNX/linux-hid-sinput
 Description: Precompiled SInput HID kernel module for Linux ${KERNEL_RELEASE}
  Experimental out-of-tree SInput HID driver, precompiled for kernel
  release ${KERNEL_RELEASE} (${ARCH}) only. A vermagic mismatch makes

@@ -352,6 +352,8 @@ static struct hid_driver sinput_driver = {
 
 module_hid_driver(sinput_driver);
 
-MODULE_AUTHOR("LeeNX");
+MODULE_AUTHOR("LeeNX <clinton.lee.taylor@gmail.com>");
 MODULE_DESCRIPTION("Experimental Linux HID driver for SInput gamepads");
 MODULE_LICENSE("GPL");
+/* See src/Makefile's SINPUT_VERSION comment: sourced from dkms.conf, not hand-duplicated here. */
+MODULE_VERSION(SINPUT_VERSION);
