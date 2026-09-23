@@ -18,6 +18,7 @@
 #include <linux/power_supply.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
+#include <linux/workqueue.h>
 
 /* Universal 4-player convention (Xbox/PS/Switch); no SInput spec says a fixed N. */
 #define SINPUT_NUM_PLAYER_LEDS 4
@@ -99,12 +100,17 @@ struct sinput_device {
 	 * path that calls it. devm doesn't unregister the LED classdevs (or
 	 * the FF-capable gamepad input_dev) until after sinput_remove()
 	 * returns, and both led_classdev_unregister() (via flush_work()) and
-	 * input_unregister_device()'s FF teardown can still synchronously
-	 * drive one more brightness_set_blocking/play_effect callback at
-	 * that point -- i.e. our own output-command callbacks can still fire
-	 * after hid_hw_stop() already ran. sinput_send_output_command()
-	 * checks this and bails out instead of calling into an already-
-	 * stopped HID transport.
+	 * input_unregister_device()'s FF teardown can still drive one more
+	 * brightness_set_blocking call, or schedule one more ff_work run via
+	 * play_effect(), at that point -- i.e. our own output-command sends
+	 * can still happen after hid_hw_stop() already ran.
+	 * sinput_send_output_command() checks this and bails out instead of
+	 * calling into an already-stopped HID transport. sinput_remove()
+	 * also cancel_work_sync()s ff_work itself, both to avoid leaking a
+	 * queued item and to close the window before this flag is even
+	 * checked; this comment's residual "can still fire after hid_hw_stop()"
+	 * case is deliberately not chased further than that, same risk
+	 * posture as the LED classdevs already accept.
 	 */
 	bool removing;
 
@@ -117,6 +123,24 @@ struct sinput_device {
 
 	/* RGB indicator LED. */
 	struct led_classdev_mc rgb_led;
+
+	/*
+	 * Force feedback. sinput_play_effect() (sinput_ff.c) is invoked by
+	 * the kernel's ff-memless helper with dev->event_lock held as a
+	 * spinlock -- with IRQs disabled, in the case of ml_effect_timer()'s
+	 * periodic re-arm -- never from a sleepable context, despite the
+	 * "workqueue context" this driver originally assumed (wrong; caught
+	 * by real review, see docs/research.md). output_lock is a mutex and
+	 * sinput_send_output_command() allocates with GFP_KERNEL and can
+	 * block in hid_hw_output_report(), none of which is safe there. So
+	 * play_effect() only records the latest requested magnitudes here
+	 * (under ff_lock, a plain spinlock safe to take from either context)
+	 * and schedules ff_work to do the real send from process context.
+	 */
+	spinlock_t ff_lock;
+	u16 ff_strong_magnitude;
+	u16 ff_weak_magnitude;
+	struct work_struct ff_work;
 };
 
 /* sinput_core.c */

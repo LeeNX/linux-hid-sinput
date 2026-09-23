@@ -533,3 +533,73 @@ LED. Not yet exercised: `FF_GAIN`, effect duration/looping via the
 real (non-emulated) SInput device's motors respond correctly -- only the
 wire bytes and the emulator's own firmware-level acknowledgment were
 confirmed here.
+
+### 2026-09-23: two real bugs from PR review, neither caught by the HIL run above
+
+CodeRabbit's automated review on the force-feedback PR flagged two issues
+in `sinput_ff.c`. Both were checked against the actual kernel source
+(`drivers/input/ff-memless.c`, `ff-core.c`, `input.c`, `workqueue.h`/`.c`,
+fetched via `gh api` the same way SDL's source has been throughout this
+project) rather than taken on faith, and both turned out real:
+
+1. **`sinput_play_effect()` ran in atomic context, but called sleeping
+   code.** `input_ff_create_memless()`'s own `ml_effect_timer()` -- a
+   kernel timer/softirq callback -- calls `play_effect()` with
+   `dev->event_lock` held as a spinlock, IRQs disabled
+   (`guard(spinlock_irqsave)(&dev->event_lock)` in `ff-memless.c`); the
+   direct-play path (`ml_ff_playback()`) does the same with a plain
+   spinlock. This file's original header comment claimed play_effect()
+   "runs from the memless helper's own workqueue context" -- wrong, and
+   the root cause: `output_lock` is a mutex and
+   `sinput_send_output_command()` does `kzalloc(GFP_KERNEL)` and a
+   blocking `hid_hw_output_report()`, none of which is safe to call while
+   holding a spinlock with interrupts disabled. The HIL run earlier today
+   didn't catch this because `output_lock` happened to be uncontended
+   every time (`mutex_lock()`'s fast path never actually calls
+   `schedule()`) and the `kzalloc(GFP_KERNEL)` never needed to block --
+   the bug was real but silent under those specific, easy conditions; it
+   would surface as "scheduling while atomic"/a hang under real
+   contention or memory pressure, exactly the kind of latent bug a single
+   successful manual test does not rule out.
+
+   Fixed by moving the actual send into a `struct work_struct` (`sdev->
+   ff_work`): `play_effect()` now only records the latest
+   `strong_magnitude`/`weak_magnitude` under a new IRQ-safe spinlock
+   (`sdev->ff_lock`) and calls `schedule_work()` (itself safe from any
+   context), and the real `output_lock`/`hid_hw_output_report()` work
+   moved into `sinput_ff_work()`, which runs from process context.
+   `sinput_remove()` (and the `probe()` failure path) now
+   `cancel_work_sync(&sdev->ff_work)` before `hid_hw_stop()`, mirroring
+   the existing `output_lock`/`removing`-flag teardown discipline already
+   used for the LED classdevs. Checked directly against
+   `kernel/workqueue.c`'s `try_to_grab_pending()` that this is safe even
+   if `sinput_ff_init()` was never reached on a given probe() failure
+   path (it only consults the `PENDING` bit, which is 0 on both a
+   zero-initialized-but-never-`INIT_WORK()`'d `work_struct` and a properly
+   initialized idle one).
+
+2. **A failed `input_ff_create_memless()` left the device advertising
+   `FF_RUMBLE` it didn't actually have.** `input_set_capability(in, EV_FF,
+   FF_RUMBLE)` was called (setting `in->evbit`/`in->ffbit` directly,
+   confirmed in `input.c`'s `input_set_capability()`) *before* attempting
+   `input_ff_create_memless()`; if creation then failed, `in->ff` stayed
+   `NULL` but the capability bits were already set and would go on to be
+   registered. `input_ff_upload()` (the `EVIOCSFF` handler, `ff-core.c`)
+   passes its `test_bit(EV_FF, dev->evbit)`/`test_bit(effect->type,
+   dev->ffbit)` checks purely off those bits, then dereferences `dev->
+   ff->ffbit` -- a NULL pointer deref reachable from an ordinary userspace
+   `EVIOCSFF` ioctl on a device that only *looks* like it supports
+   rumble. Fixed by `__clear_bit(FF_RUMBLE, in->ffbit)` /
+   `__clear_bit(EV_FF, in->evbit)` in the `input_ff_create_memless()`
+   failure branch, restoring the "optional feature that fails safe, not
+   fails visibly-but-broken" policy this function already claimed to
+   have.
+
+Rebuilt (same podman container, no rebuild needed) and re-ran the full
+`rp4b-ble-hil` byte-exact check from the entry above after both fixes:
+identical results (`strong=0xa000/weak=0x2000` ->
+`01 02 a0 00 20 00...` on the wire, `"event rumble left=160 right=32"`
+from the emulator, `"left=0 right=0"` on stop), `dmesg` clean, no
+lockdep/atomic warnings. The fix changed *when* the send happens, not
+*what* gets sent, so byte-for-byte parity with the earlier run is the
+expected (and confirmed) outcome, not a coincidence.

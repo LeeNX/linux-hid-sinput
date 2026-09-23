@@ -253,6 +253,16 @@ stop:
 	sdev->removing = true;
 	mutex_unlock(&sdev->output_lock);
 
+	/*
+	 * Safe even if sinput_ff_init() was never reached on this path
+	 * (e.g. devm_input_allocate_device() itself failed first): sdev is
+	 * devm_kzalloc'd, and cancel_work_sync() on a zeroed, never-
+	 * INIT_WORK()'d work_struct is a safe no-op -- it only ever consults
+	 * the PENDING bit, which is 0 either way. See sdev->ff_lock's
+	 * comment in sinput.h for why this exists at all.
+	 */
+	cancel_work_sync(&sdev->ff_work);
+
 	hid_hw_stop(hdev);
 	return ret;
 }
@@ -274,6 +284,16 @@ static void sinput_remove(struct hid_device *hdev)
 	mutex_lock(&sdev->output_lock);
 	sdev->removing = true;
 	mutex_unlock(&sdev->output_lock);
+
+	/*
+	 * Also before hid_hw_stop(): waits out any ff_work already running
+	 * (from a play_effect() that fired just before "removing" was set
+	 * above) and cancels anything merely queued, so no more rumble sends
+	 * happen once the transport is about to go down and no work item is
+	 * left referencing sdev past this point. See sdev->ff_lock's comment
+	 * in sinput.h.
+	 */
+	cancel_work_sync(&sdev->ff_work);
 
 	/*
 	 * Deliberately no mutex_destroy(&sdev->output_lock) here: sdev and
