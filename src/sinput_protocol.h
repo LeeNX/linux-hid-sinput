@@ -72,6 +72,31 @@
 #define SINPUT_CMD_RGB_LED    0x04
 
 /*
+ * Output report (SINPUT_REPORT_ID_OUTPUT) payload offsets, report ID at
+ * byte 0, command byte (one of SINPUT_CMD_*) at SI_OUT_CMD. Confirmed
+ * against leenx-foss/Bluepad32/hil's ref-ble-gamepad/BleSInput.cpp's
+ * onWrite() -- real reverse-engineered host traffic, not the spec (which
+ * doesn't document this layout at all).
+ */
+#define SI_OUT_CMD             1
+/*
+ * SINPUT_CMD_PLAYER_LED payload: a single "player number" byte, not a
+ * bitmask -- SDL_hidapi_sinput.c sends its own generic 0-based joystick
+ * player index +1 (0 = unassigned), clamped to 0-255. The device decides
+ * how to display that number on whatever LED hardware it has.
+ */
+#define SI_OUT_PLAYER_LED_NUM  2
+/*
+ * SINPUT_CMD_RGB_LED payload: R/G/B, each 0-63 (6-bit), NOT 0-255.
+ * BleSInput.h's own comment: "hosts send e.g. 64 for #FFFFFF -- scale to
+ * 8-bit via (v*255+31)/63". The .cpp has a comment about a real off-by-one
+ * bug that project hit and fixed in this exact byte layout, so trust it.
+ */
+#define SI_OUT_RGB_RED         2
+#define SI_OUT_RGB_GREEN       3
+#define SI_OUT_RGB_BLUE        4
+
+/*
  * Command/feature response (SINPUT_REPORT_ID_CMD) byte offsets, report ID
  * at byte 0 and the echoed command byte at SI_CMD_ECHO.
  */
