@@ -130,6 +130,72 @@ static int sinput_request_features(struct sinput_device *sdev)
 	return ret;
 }
 
+struct sinput_report_expect {
+	enum hid_report_type type;
+	unsigned int id;
+	unsigned int size; /* full wire size in bytes, report ID byte included */
+	const char *name;
+};
+
+static const struct sinput_report_expect sinput_expected_reports[] = {
+	{ HID_INPUT_REPORT,  SINPUT_REPORT_ID_STATE,  SINPUT_INPUT_REPORT_SIZE,  "state" },
+	{ HID_INPUT_REPORT,  SINPUT_REPORT_ID_CMD,    SINPUT_INPUT_REPORT_SIZE,  "command response" },
+	{ HID_OUTPUT_REPORT, SINPUT_REPORT_ID_OUTPUT, SINPUT_OUTPUT_REPORT_SIZE, "output command" },
+};
+
+/*
+ * Every byte offset in sinput_protocol.h is reverse-derived from SDL's
+ * SInput HIDAPI driver, not from this project ever having decoded a real
+ * SInput report descriptor -- see that header's own top comment. hid_parse()
+ * (called just before this, in sinput_probe()) already did that decoding for
+ * us; this cross-checks its result against what every offset in this driver
+ * assumes, purely as diagnostic logging. Never fatal: an out-of-tree driver
+ * whose whole reason to exist is testing those assumptions against real
+ * hardware should surface a mismatch, not refuse to load over one -- the
+ * existing HIL-verified byte-exact button/axis/LED/rumble traffic (see
+ * docs/research.md) already proves the offsets work in practice even if a
+ * given device's descriptor phrases the sizes unexpectedly.
+ */
+static void sinput_verify_report_sizes(struct hid_device *hdev)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(sinput_expected_reports); i++) {
+		const struct sinput_report_expect *exp = &sinput_expected_reports[i];
+		struct hid_report_enum *renum = &hdev->report_enum[exp->type];
+		struct hid_report *report = renum->report_id_hash[exp->id];
+		unsigned int descriptor_bytes;
+
+		if (!report) {
+			hid_info(hdev,
+				 "report descriptor has no report id %u for the assumed %s report (type %d) -- sinput_protocol.h's offsets are unverified for this device\n",
+				 exp->id, exp->name, exp->type);
+			continue;
+		}
+
+		/*
+		 * report->size is the descriptor's data field width in bits,
+		 * excluding the report ID byte itself for numbered reports
+		 * (renum->numbered) -- the transport prepends that byte
+		 * separately on the wire, it is not part of any HID field.
+		 * sinput_protocol.h's *_REPORT_SIZE constants count the
+		 * report ID as byte 0 (see e.g. SI_PLUG_STATUS's comment),
+		 * so add it back in before comparing like for like.
+		 */
+		descriptor_bytes = report->size / 8;
+		if (renum->numbered)
+			descriptor_bytes += 1;
+
+		if (descriptor_bytes != exp->size)
+			hid_warn(hdev,
+				 "report id %u (%s): descriptor says %u bytes (numbered=%u), sinput_protocol.h assumes %u -- byte offsets may be wrong for this device\n",
+				 exp->id, exp->name, descriptor_bytes, renum->numbered, exp->size);
+		else
+			hid_info(hdev, "report id %u (%s): descriptor size matches assumed %u bytes\n",
+				 exp->id, exp->name, exp->size);
+	}
+}
+
 static int sinput_probe(struct hid_device *hdev,
 			const struct hid_device_id *id)
 {
@@ -204,6 +270,8 @@ static int sinput_probe(struct hid_device *hdev,
 	ret = hid_parse(hdev);
 	if (ret)
 		return ret;
+
+	sinput_verify_report_sizes(hdev);
 
 	ret = hid_hw_start(hdev, HID_CONNECT_HIDRAW);
 	if (ret)

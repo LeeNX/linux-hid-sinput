@@ -603,3 +603,47 @@ from the emulator, `"left=0 right=0"` on stop), `dmesg` clean, no
 lockdep/atomic warnings. The fix changed *when* the send happens, not
 *what* gets sent, so byte-for-byte parity with the earlier run is the
 expected (and confirmed) outcome, not a coincidence.
+
+### 2026-09-24: report descriptor cross-check against real hardware -- every assumed size confirmed
+
+Every byte offset in `sinput_protocol.h` has been reverse-derived from
+SDL's `SDL_hidapi_sinput.c` since day one (see that header's own top
+comment) -- this project had never actually decoded a real SInput report
+descriptor itself and checked. `hid_parse()` (called in `sinput_probe()`,
+just before `hid_hw_start()`) already does that decoding internally; the
+only missing piece was reading its result back out and comparing it
+against what every offset in this driver assumes.
+
+Added `sinput_verify_report_sizes()` (`sinput_core.c`), called right after
+`hid_parse()`. For each of the three known report IDs (state, command
+response, output command), it looks up the parsed `struct hid_report *`
+via `hdev->report_enum[type].report_id_hash[id]` and compares
+`report->size` (the descriptor's field width, in bits) against
+`SINPUT_INPUT_REPORT_SIZE`/`SINPUT_OUTPUT_REPORT_SIZE`. One real subtlety
+worth recording: `report->size` excludes the report ID byte itself for
+numbered reports (`hdev->report_enum[type].numbered`) -- the transport
+prepends that byte separately on the wire, it is not a HID field -- while
+this driver's own `*_REPORT_SIZE` constants count the report ID as byte 0
+(see `SI_PLUG_STATUS`'s comment in `sinput_protocol.h`), so the check adds
+that byte back before comparing like for like. Deliberately just
+`hid_info`/`hid_warn` logging, never fatal to `probe()`: the whole point of
+an out-of-tree research driver is to surface a real mismatch, not refuse
+to load over one, especially when the existing HIL-verified byte-exact
+button/axis/LED/rumble traffic (every entry above) already proves the
+offsets work in practice regardless of what any one device's descriptor
+says.
+
+Ran on `rp4b-ble-hil` (same emulator, same build/deploy path as every
+other entry above). Result: all three matched exactly on the first try --
+`report id 1 (state): descriptor size matches assumed 64 bytes`, `report
+id 2 (command response): descriptor size matches assumed 64 bytes`,
+`report id 3 (output command): descriptor size matches assumed 48 bytes`.
+No bug this time, which is itself the meaningful result: this is the
+first time the report *sizes* SDL's driver assumes have been checked
+against an actual descriptor rather than only inferred field-by-field from
+wire captures, and they hold up. Individual *field offsets within* each
+report (SI_LEFT_X, SI_ACCEL_X, etc.) are still not decoded from the
+descriptor itself -- HID field-level introspection (usage pages, per-field
+bit offsets) is a further step this entry does not attempt -- but the
+report-level framing everything else in this driver is built on is now
+independently confirmed, not just assumed.
