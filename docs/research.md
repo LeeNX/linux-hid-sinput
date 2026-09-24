@@ -695,4 +695,74 @@ still real and still a legitimate reason to keep a longer timeout than
 200ms regardless, so the change was kept -- but it should not be treated
 as having fixed the underlying reliability issue, and whatever actually
 causes it most likely lives in the emulator/rig itself, which this
-project has no visibility into or control over. Not chased further.
+project has no visibility into or control over. Not chased further at
+the time -- see the next entry for where that assumption turned out to
+be wrong.
+
+### 2026-09-24: FEATURES flakiness root-caused precisely (in bluetoothd, not this driver or the rig) -- retry loop kept as a real but partial mitigation
+
+Continuation of the entry above. Got access to `bluetoothd` debug logging
+on `rp4b-ble-hil` (`bluetoothd -d` via a temporary systemd drop-in,
+restored afterward) and captured the exact sequence across several fresh
+BLE reconnects. Two real findings, both confirmed against actual source
+(`bluetoothd`'s HOG/HID-over-GATT profile, `profiles/input/hog-lib.c`,
+matched to the installed BlueZ 5.82 via its public upstream repo), not
+guessed from log lines alone:
+
+1. `bluetoothd` creates the `uhid` device -- which is what makes this
+   driver's `probe()` run at all -- before it has resolved which GATT
+   handle maps to which HID report ID for every Report characteristic. A
+   `msleep()` in `probe()` before the first FEATURES request, long enough
+   to clear that specific window, did not fix the flakiness (confirmed:
+   the write consistently went out *after* that resolution had already
+   completed, per debug logs, and still got no response).
+2. The actual mechanism: a Report characteristic's incoming-notification
+   callback is only registered with `bluetoothd`'s internal ATT dispatcher
+   once its own CCC (notification-enable) read+write+confirm sequence
+   completes for that specific characteristic -- a multi-step async chain
+   run independently per report, interleaved with unrelated GATT discovery
+   for other services on the same connection (device info, battery, a
+   second BLE service). A notification that arrives before that chain
+   finishes for this report is silently dropped by `bluetoothd`'s own ATT
+   dispatch layer -- there is no error path for it, confirmed by an
+   entirely clean debug log across a 5-attempt, 5-second retry window with
+   zero `report_ccc_written_cb()` calls for the relevant characteristic at
+   all. This is why a response could be confirmed present on the wire
+   (real BLE capture, previous entries) and still never reach
+   `raw_event()`, independent of how long or how often this driver was
+   willing to ask.
+
+Replaced the fixed pre-request delay with a retry loop
+(`SINPUT_FEATURES_RETRY_COUNT` x `SINPUT_FEATURES_RETRY_MS`, 5 x 1000ms):
+each resend gives the response a fresh chance to land once `bluetoothd`'s
+internal state has caught up, rather than betting everything on one exact
+delay guess. Measured properly rather than assumed fixed: still did not
+reliably succeed across multiple fresh-reconnect cycles on this rig.
+
+**Ruled out, not just suspected**: tested whether a stale/mismatched BLE
+bond between this Pi and the rig's SInput emulator explained the
+remaining flakiness, since bonded devices are meant to persist CCC
+subscription state across reconnects and a stale mismatch was a plausible
+explanation for `bluetoothd` never running its enable sequence at all.
+Cleared the bond on both sides (this Pi's `bluetoothd`, and the
+emulator's own bond store via its own maintenance tooling) and re-paired
+completely fresh -- confirmed clean via `bluetoothctl` (`Paired: yes,
+Bonded: yes`) before retesting. Still failed across 4 more fresh-reconnect
+cycles at the same rate as before. This rules out bond staleness
+specifically; whatever remains is some other source of variability in
+`bluetoothd`'s internal timing for this connection's GATT service layout
+that a driver-side retry budget within a few seconds doesn't reliably
+outrun.
+
+**Net status**: root cause is understood and documented precisely, at the
+`bluetoothd`/BlueZ level, not in this driver or in the SInput protocol
+implementation on either side of the connection. The retry loop is kept
+as a real, evidence-based improvement over a single fixed wait, but is
+honestly a partial mitigation, not a fix -- this remains an open
+reliability gap for BLE `FEATURES` negotiation on this specific rig
+configuration. A full fix would need either patching `bluetoothd` itself
+(a system package, out of scope for this project) or a fundamentally
+different driver-side strategy (e.g. treating a late/absent FEATURES
+response as recoverable after registration, re-registering input devices
+if capabilities turn out to differ once a response eventually arrives --
+a real architecture change, not attempted here).

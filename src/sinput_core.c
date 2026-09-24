@@ -31,31 +31,36 @@
 #define DRV_NAME "sinput"
 
 /*
- * How long probe() waits for a FEATURES response before falling back to
- * "assume everything present" (see the defaults block below). Originally
- * 200ms; raised after directly observing a real response take ~2.1s on
- * rp4b-ble-hil following a fresh BLE (re)connect (see docs/research.md,
- * 2026-09-24) -- 200ms was never going to catch that, and BLE has a
- * well-known reason a fresh (re)connect can be slow: it starts on
- * conservative default connection parameters, and negotiating faster ones
- * is itself an L2CAP round trip the peripheral often defers by roughly a
- * second. USB has no equivalent slow-start, so this costs USB devices
- * nothing in practice -- a non-responding device still falls back after
- * the same wait either way, just a few seconds later than before.
+ * probe() sends the FEATURES request up to this many times, waiting
+ * SINPUT_FEATURES_RETRY_MS between each, before giving up and falling back
+ * to "assume everything present" (see the defaults block below).
  *
- * This raise is a real, defensible improvement on its own merits, but
- * measured, it did not fix this rig's own reliability problem: 11 more
- * fresh-reconnect cycles at this new timeout (see docs/research.md,
- * 2026-09-24) got zero real FEATURES responses, no better than before the
- * change. Whatever actually makes this rig's ESP32-BLE-Gamepad emulator
- * "usually never answer" (see the very first HIL entry, 2026-09-22) isn't
- * a client-side timeout problem -- it looks like it lives in the
- * emulator/rig itself, which this driver has no visibility into or
- * control over. Kept anyway since the connection-parameter-negotiation
- * reasoning above holds regardless of whatever else is also wrong with
- * this specific test rig.
+ * This used to be a single request plus one longer wait (200ms, then
+ * 3000ms after that was found not long enough -- see docs/research.md,
+ * 2026-09-24). Neither fixed it, because the real problem was never how
+ * long we waited: root-caused via bluetoothd debug logging
+ * (profiles/input/hog-lib.c) on rp4b-ble-hil that a FEATURES response can
+ * arrive on the wire (confirmed via real BLE capture) and still never
+ * reach raw_event(), because bluetoothd only starts actually listening for
+ * notifications on a given Report characteristic once its own internal
+ * CCC-write-confirm chain completes for that specific characteristic
+ * (report_ccc_written_cb() -> g_attrib_register(), itself gated on a
+ * read-CCC + write-CCC round trip run independently per report,
+ * interleaved with unrelated GATT discovery for other services). A
+ * response landing before that chain finishes for this report is silently
+ * dropped by bluetoothd's own ATT dispatcher -- no error path exists for
+ * it, and no amount of client-side waiting helps once it's already gone.
+ *
+ * A single fixed pre-request delay (tried 2000ms) didn't reliably clear
+ * this either, because that internal timing is genuinely variable, not a
+ * fixed offset. Retrying instead of guessing one delay works with that
+ * variability rather than against it: each resend gives the response a
+ * fresh chance to land after bluetoothd's internal state has caught up,
+ * whenever that actually happens to be, instead of betting everything on
+ * one exact guess.
  */
-#define SINPUT_FEATURES_TIMEOUT_MS 3000
+#define SINPUT_FEATURES_RETRY_COUNT 5
+#define SINPUT_FEATURES_RETRY_MS    1000
 
 static void sinput_parse_features(struct sinput_device *sdev,
 				  const u8 *data, size_t size)
@@ -165,6 +170,7 @@ static int sinput_probe(struct hid_device *hdev,
 {
 	struct sinput_device *sdev;
 	int ret;
+	int i;
 
 	sdev = devm_kzalloc(&hdev->dev, sizeof(*sdev), GFP_KERNEL);
 	if (!sdev)
@@ -239,12 +245,20 @@ static int sinput_probe(struct hid_device *hdev,
 	if (ret)
 		return ret;
 
-	ret = sinput_request_features(sdev);
-	if (ret < 0)
-		hid_info(hdev, "could not send SInput features request: %d\n", ret);
-	else if (!wait_for_completion_timeout(&sdev->caps_done,
-					      msecs_to_jiffies(SINPUT_FEATURES_TIMEOUT_MS)))
-		hid_info(hdev, "no SInput features response, assuming full capability set\n");
+	/* See SINPUT_FEATURES_RETRY_COUNT's comment for why this retries. */
+	for (i = 0; i < SINPUT_FEATURES_RETRY_COUNT; i++) {
+		ret = sinput_request_features(sdev);
+		if (ret < 0) {
+			hid_info(hdev, "could not send SInput features request: %d\n", ret);
+			break;
+		}
+		if (wait_for_completion_timeout(&sdev->caps_done,
+						msecs_to_jiffies(SINPUT_FEATURES_RETRY_MS)))
+			break;
+	}
+	if (!sdev->caps.valid)
+		hid_info(hdev, "no SInput features response after %d attempt(s), assuming full capability set\n",
+			 SINPUT_FEATURES_RETRY_COUNT);
 
 	ret = sinput_input_init(sdev);
 	if (ret)
