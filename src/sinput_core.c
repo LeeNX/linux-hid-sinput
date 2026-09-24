@@ -30,6 +30,33 @@
 
 #define DRV_NAME "sinput"
 
+/*
+ * How long probe() waits for a FEATURES response before falling back to
+ * "assume everything present" (see the defaults block below). Originally
+ * 200ms; raised after directly observing a real response take ~2.1s on
+ * rp4b-ble-hil following a fresh BLE (re)connect (see docs/research.md,
+ * 2026-09-24) -- 200ms was never going to catch that, and BLE has a
+ * well-known reason a fresh (re)connect can be slow: it starts on
+ * conservative default connection parameters, and negotiating faster ones
+ * is itself an L2CAP round trip the peripheral often defers by roughly a
+ * second. USB has no equivalent slow-start, so this costs USB devices
+ * nothing in practice -- a non-responding device still falls back after
+ * the same wait either way, just a few seconds later than before.
+ *
+ * This raise is a real, defensible improvement on its own merits, but
+ * measured, it did not fix this rig's own reliability problem: 11 more
+ * fresh-reconnect cycles at this new timeout (see docs/research.md,
+ * 2026-09-24) got zero real FEATURES responses, no better than before the
+ * change. Whatever actually makes this rig's ESP32-BLE-Gamepad emulator
+ * "usually never answer" (see the very first HIL entry, 2026-09-22) isn't
+ * a client-side timeout problem -- it looks like it lives in the
+ * emulator/rig itself, which this driver has no visibility into or
+ * control over. Kept anyway since the connection-parameter-negotiation
+ * reasoning above holds regardless of whatever else is also wrong with
+ * this specific test rig.
+ */
+#define SINPUT_FEATURES_TIMEOUT_MS 3000
+
 static void sinput_parse_features(struct sinput_device *sdev,
 				  const u8 *data, size_t size)
 {
@@ -215,7 +242,8 @@ static int sinput_probe(struct hid_device *hdev,
 	ret = sinput_request_features(sdev);
 	if (ret < 0)
 		hid_info(hdev, "could not send SInput features request: %d\n", ret);
-	else if (!wait_for_completion_timeout(&sdev->caps_done, msecs_to_jiffies(200)))
+	else if (!wait_for_completion_timeout(&sdev->caps_done,
+					      msecs_to_jiffies(SINPUT_FEATURES_TIMEOUT_MS)))
 		hid_info(hdev, "no SInput features response, assuming full capability set\n");
 
 	ret = sinput_input_init(sdev);

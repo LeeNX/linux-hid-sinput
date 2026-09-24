@@ -664,3 +664,35 @@ IMU `input_dev` actually carrying `PROP=ACCELEROMETER` and a populated
 resolution has not itself been directly observed on real hardware this
 session -- worth another HIL pass with better luck (or a fresh rig
 pairing) before fully closing this out to the same bar as rumble/LEDs.
+
+### 2026-09-24: tried raising the FEATURES timeout to fix the "usually never answers" problem -- didn't work
+
+The "no SInput features response" fallback has come up in nearly every
+HIL entry in this file since 2026-09-22, most recently blocking the IMU
+verification above. Tried an actual fix rather than working around it
+again: raised `probe()`'s `wait_for_completion_timeout()` from 200ms to
+`SINPUT_FEATURES_TIMEOUT_MS` (3000ms, `sinput_core.c`), reasoning from the
+one real response timing directly observed so far (~2.1s after a fresh
+BLE reconnect, previous entry) plus a well-known BLE characteristic: a
+freshly (re)connected link starts on conservative default connection
+parameters, and negotiating faster ones is itself an L2CAP round trip the
+peripheral often defers by roughly a second, so early GATT traffic
+(FEATURES included) is genuinely slower right after connecting than once
+the link has settled.
+
+Measured it properly rather than assuming it worked: 11 more fresh
+disconnect/reconnect cycles on `rp4b-ble-hil` at the new 3000ms timeout
+(5 with explicit `driver attached` confirmation that `probe()` actually
+ran each time, all clean binds) -- zero real FEATURES responses. That's
+no better than the roughly 1-in-4-or-5 hit rate seen earlier this session
+at the old 200ms timeout, and arguably looks worse, though the sample
+sizes are too small either way to call that a real difference.
+
+Conclusion: this rig's unreliable FEATURES response is not primarily a
+client-side timeout problem, or at least not one bounded by a few
+seconds. The BLE connection-parameter-negotiation reasoning above is
+still real and still a legitimate reason to keep a longer timeout than
+200ms regardless, so the change was kept -- but it should not be treated
+as having fixed the underlying reliability issue, and whatever actually
+causes it most likely lives in the emulator/rig itself, which this
+project has no visibility into or control over. Not chased further.
