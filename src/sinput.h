@@ -44,6 +44,22 @@ struct sinput_caps {
 	bool player_leds;
 	bool accel;
 	bool gyro;
+	/*
+	 * Full-scale range the device reports for its accelerometer (+/- g)
+	 * and gyroscope (+/- degrees/second) -- SI_FEAT_ACCEL_RANGE/
+	 * SI_FEAT_GYRO_RANGE in the FEATURES response, e.g. accel_range=8
+	 * means the raw -32768..32767 axis spans -8g..+8g. Zero (the
+	 * zero-initialized default) means "unknown": no real FEATURES
+	 * response has told us a range, so sinput_imu_init() reports plain
+	 * unscaled axes instead of fabricating a resolution/INPUT_PROP_
+	 * ACCELEROMETER claim it can't back up. See SDL_hidapi_sinput.c's
+	 * CalculateAccelScale()/CalculateGyroScale() for the reference this
+	 * mirrors, and struct input_absinfo's doc comment in
+	 * include/uapi/linux/input.h for what INPUT_PROP_ACCELEROMETER
+	 * changes resolution units to.
+	 */
+	u16 accel_range;
+	u16 gyro_range;
 	bool left_stick;
 	bool right_stick;
 	bool left_trigger;

@@ -194,15 +194,53 @@ int sinput_imu_init(struct sinput_device *sdev)
 	imu->id.bustype = sdev->hdev->bus;
 
 	__set_bit(EV_ABS, imu->evbit);
+
+	/*
+	 * With INPUT_PROP_ACCELEROMETER set, ABS_X/Y/Z resolution is defined
+	 * as units-per-g and ABS_RX/RY/RZ as units-per-degree-per-second (see
+	 * struct input_absinfo's doc comment in include/uapi/linux/input.h),
+	 * matching hid-playstation.c's ps_sensors_create() pattern for its
+	 * DualShock/DualSense "sensors" device. Only set it (and the
+	 * per-axis resolution below) when caps.accel_range/gyro_range are
+	 * actually known from a real FEATURES response -- caps.accel/
+	 * caps.gyro alone can also come from probe()'s "assume everything
+	 * present" fallback, which has no real range to report. Claiming a
+	 * resolution without knowing the true range would be a fabricated
+	 * number dressed up as calibration data, worse than reporting none.
+	 */
+	if (sdev->caps.accel_range || sdev->caps.gyro_range)
+		__set_bit(INPUT_PROP_ACCELEROMETER, imu->propbit);
+
 	if (sdev->caps.accel) {
 		input_set_abs_params(imu, ABS_X, -32768, 32767, 0, 0);
 		input_set_abs_params(imu, ABS_Y, -32768, 32767, 0, 0);
 		input_set_abs_params(imu, ABS_Z, -32768, 32767, 0, 0);
+		/*
+		 * Raw int16 spans -32768..32767 representing -accel_range..
+		 * +accel_range g (see caps.accel_range's comment in
+		 * sinput.h), so units-per-g is 32768 / accel_range -- the
+		 * same relationship SDL_hidapi_sinput.c's CalculateAccelScale()
+		 * expresses the other way around (physical units per raw count).
+		 */
+		if (sdev->caps.accel_range) {
+			u16 res = 32768 / sdev->caps.accel_range;
+
+			input_abs_set_res(imu, ABS_X, res);
+			input_abs_set_res(imu, ABS_Y, res);
+			input_abs_set_res(imu, ABS_Z, res);
+		}
 	}
 	if (sdev->caps.gyro) {
 		input_set_abs_params(imu, ABS_RX, -32768, 32767, 0, 0);
 		input_set_abs_params(imu, ABS_RY, -32768, 32767, 0, 0);
 		input_set_abs_params(imu, ABS_RZ, -32768, 32767, 0, 0);
+		if (sdev->caps.gyro_range) {
+			u16 res = 32768 / sdev->caps.gyro_range;
+
+			input_abs_set_res(imu, ABS_RX, res);
+			input_abs_set_res(imu, ABS_RY, res);
+			input_abs_set_res(imu, ABS_RZ, res);
+		}
 	}
 
 	sdev->imu = imu;

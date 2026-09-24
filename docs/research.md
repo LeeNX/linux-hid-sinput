@@ -603,3 +603,64 @@ from the emulator, `"left=0 right=0"` on stop), `dmesg` clean, no
 lockdep/atomic warnings. The fix changed *when* the send happens, not
 *what* gets sent, so byte-for-byte parity with the earlier run is the
 expected (and confirmed) outcome, not a coincidence.
+
+### 2026-09-24: IMU resolution/INPUT_PROP_ACCELEROMETER -- parsing confirmed, live registration not directly observed
+
+`SI_FEAT_ACCEL_RANGE`/`SI_FEAT_GYRO_RANGE` have existed in
+`sinput_protocol.h` since the FEATURES response layout was first
+reverse-derived from SDL, but nothing ever read them: `sinput_imu_init()`
+registered `ABS_X/Y/Z`/`ABS_RX/RY/RZ` with a fixed `-32768..32767` range
+and no resolution or `INPUT_PROP_ACCELEROMETER`, so userspace had no way
+to convert a raw value into a real physical unit. Checked against the two
+reference drivers this project already follows for design (`hid-
+playstation.c`, `hid-nintendo.c`) before assuming IIO was the right model
+here -- it isn't, for gamepad motion controls specifically:
+`hid-playstation.c`'s `ps_sensors_create()` does exactly the same thing
+this fix now does, `evdev` with `INPUT_PROP_ACCELEROMETER` and
+`input_abs_set_res()`, not IIO.
+
+Added `caps.accel_range`/`caps.gyro_range` (`struct sinput_caps`),
+parsed in `sinput_parse_features()`. `sinput_imu_init()` now sets
+`INPUT_PROP_ACCELEROMETER` and per-axis resolution (`32768 / range`,
+counts-per-g / counts-per-degree-per-second) whenever a real FEATURES
+response supplied a nonzero range, and falls back to today's plain
+unscaled axes (no property, no resolution) when it didn't -- reporting a
+resolution without knowing the true range would be a fabricated number
+dressed up as calibration data. Units and the counts-per-unit formula both
+cross-checked against two independent sources that agree: SDL's own
+`CalculateAccelScale()`/`CalculateGyroScale()` (`accelRange` in +/-g,
+`gyroRange` in +/-degrees/second, raw int16 spanning the full range) and
+the kernel's own `struct input_absinfo` doc comment in
+`include/uapi/linux/input.h` (`INPUT_PROP_ACCELEROMETER` changes
+resolution semantics to exactly those units).
+
+HIL-verified the parsing half only. A forced BLE disconnect/reconnect on
+`rp4b-ble-hil` did get one real FEATURES response through mid-session
+(this rig's emulator usually never answers at all, see the 2026-09-22
+entry above) -- logged `accel=1 (+/-8g) gyro=1 (+/-2000 dps)`, both
+plausible real IMU chip specs, confirming the offsets and the new log
+fields are correct. But it arrived roughly 2 seconds after `probe()`'s
+200ms `wait_for_completion_timeout()` had already given up, so
+`sinput_imu_init()` had already registered the IMU device from the
+fallback path by the time `caps.accel_range`/`gyro_range` actually got
+set -- the existing, already-documented "caps can be mutated by a late
+response after registration already used the old values" design (see
+`struct sinput_caps`'s comment in `sinput.h`), not a new bug. Tried to
+force a same-session repeat with a temporarily-relaxed 3-second timeout
+(local test build, never committed) across both a forced reconnect and
+one organic reconnect; FEATURES still didn't answer either time within
+3 seconds. This looks like a genuine reliability characteristic of this
+specific emulator/rig rather than something a longer client-side timeout
+fixes -- consistent with every earlier HIL entry's "usually never
+answers" characterization. Not chased further given no access to the
+private rig's own tooling for controlling the emulator's FEATURES
+behavior more deliberately.
+
+Net result: the parsing and the scaling arithmetic are both independently
+confirmed correct (one real parse, two independent unit-formula sources
+agreeing), and the code path is implemented following the same pattern as
+every other capability-gated feature in this driver, but a live registered
+IMU `input_dev` actually carrying `PROP=ACCELEROMETER` and a populated
+resolution has not itself been directly observed on real hardware this
+session -- worth another HIL pass with better luck (or a fresh rig
+pairing) before fully closing this out to the same bar as rumble/LEDs.

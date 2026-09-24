@@ -49,6 +49,8 @@ static void sinput_parse_features(struct sinput_device *sdev,
 	caps->player_leds   = !!(flags0 & SI_FLAG0_PLAYER_LEDS);
 	caps->accel         = !!(flags0 & SI_FLAG0_ACCEL);
 	caps->gyro          = !!(flags0 & SI_FLAG0_GYRO);
+	caps->accel_range   = get_unaligned_le16(data + SI_FEAT_ACCEL_RANGE);
+	caps->gyro_range    = get_unaligned_le16(data + SI_FEAT_GYRO_RANGE);
 	caps->left_stick    = !!(flags0 & SI_FLAG0_LEFT_STICK);
 	caps->right_stick   = !!(flags0 & SI_FLAG0_RIGHT_STICK);
 	caps->left_trigger  = !!(flags0 & SI_FLAG0_LEFT_TRIGGER);
@@ -62,11 +64,12 @@ static void sinput_parse_features(struct sinput_device *sdev,
 	caps->valid = true;
 
 	hid_info(sdev->hdev,
-		 "SInput protocol v%u, poll rate %u us, sticks=%d/%d triggers=%d/%d accel=%d gyro=%d buttons=0x%08x\n",
+		 "SInput protocol v%u, poll rate %u us, sticks=%d/%d triggers=%d/%d accel=%d (+/-%ug) gyro=%d (+/-%u dps) buttons=0x%08x\n",
 		 caps->protocol_version, caps->polling_rate_us,
 		 caps->left_stick, caps->right_stick,
 		 caps->left_trigger, caps->right_trigger,
-		 caps->accel, caps->gyro, caps->button_mask);
+		 caps->accel, caps->accel_range, caps->gyro, caps->gyro_range,
+		 caps->button_mask);
 }
 
 /*

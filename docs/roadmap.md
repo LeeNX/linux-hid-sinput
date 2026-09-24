@@ -44,7 +44,16 @@
       against the emulator's `rgb?` query, exact byte match including a
       non-trivial mixed color. See `research.md`, 2026-09-22.
 - [ ] touchpad / multitouch
-- [ ] sensor integration
+- [ ] sensor integration -- implemented: `caps.accel_range`/`gyro_range`
+      parsed from FEATURES, `sinput_imu_init()` sets
+      `INPUT_PROP_ACCELEROMETER` and per-axis resolution when a real range
+      is known, matching `hid-playstation.c`'s `ps_sensors_create()`
+      pattern (evdev, not IIO, is correct here). Still unchecked: parsing
+      confirmed correct against one real FEATURES response on
+      `rp4b-ble-hil`, but that response arrived after `sinput_imu_init()`
+      had already registered from the fallback path, so the live
+      registered device with `PROP=ACCELEROMETER` set has not itself been
+      observed yet. See `research.md`, 2026-09-24.
 
 ## 0.4 - reliability
 - [ ] USB hotplug stress
