@@ -315,6 +315,20 @@ static int sinput_probe(struct hid_device *hdev,
 	if (ret)
 		return ret;
 
+	/*
+	 * hid_hw_start() alone is not enough: per <linux/hid.h>'s
+	 * hid_driver kerneldoc, "During probe, input will not be passed to
+	 * raw_event unless hid_device_io_start is called." Without this,
+	 * hid_input_report()'s driver_input_lock trylock always loses to
+	 * the lock hid_device_probe() is still holding around this entire
+	 * function, so every incoming report -- including the FEATURES
+	 * response the retry loop below is about to wait on -- is silently
+	 * dropped for as long as probe() runs. hid_device_io_start() hands
+	 * that lock back early so raw_event can actually fire while we
+	 * wait.
+	 */
+	hid_device_io_start(hdev);
+
 	/* See SINPUT_FEATURES_RETRY_COUNT's comment for why this retries. */
 	for (i = 0; i < SINPUT_FEATURES_RETRY_COUNT; i++) {
 		ret = sinput_request_features(sdev);
@@ -442,8 +456,22 @@ static int sinput_raw_event(struct hid_device *hdev,
 		}
 	} else if (data[0] == SINPUT_REPORT_ID_CMD && size > SI_CMD_ECHO &&
 		   data[SI_CMD_ECHO] == SINPUT_CMD_FEATURES) {
+		/*
+		 * The peripheral can notify before BLE ATT MTU negotiation
+		 * finishes, truncating this report to the 23-byte default
+		 * MTU. That still passes the size/echo check above (both
+		 * live well inside the first 23 bytes), so a short, genuine
+		 * fragment reaches here -- but sinput_parse_features() below
+		 * rejects anything shorter than SINPUT_INPUT_REPORT_SIZE and
+		 * leaves caps->valid false. Gate the completion on that
+		 * instead of firing unconditionally: otherwise this first
+		 * truncated fragment ends the probe() wait immediately,
+		 * discarding every later full-size retry that would
+		 * otherwise have succeeded.
+		 */
 		sinput_parse_features(sdev, data, size);
-		complete(&sdev->caps_done);
+		if (sdev->caps.valid)
+			complete(&sdev->caps_done);
 	}
 
 	/* Returning 0 leaves the report available to hidraw. */

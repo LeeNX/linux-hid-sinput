@@ -822,3 +822,108 @@ different driver-side strategy (e.g. treating a late/absent FEATURES
 response as recoverable after registration, re-registering input devices
 if capabilities turn out to differ once a response eventually arrives --
 a real architecture change, not attempted here).
+
+### 2026-09-25: the entry above was wrong about where the bug lives -- real root cause found in this driver's `probe()`, fixed, 10/10 HIL-verified
+
+The 2026-09-24 entry above concluded the FEATURES flakiness was a
+`bluetoothd`/BlueZ bug (a CCC-registration race in `hog-lib.c`). That
+conclusion does not survive further testing and is superseded by this
+entry: the real bug was in this driver all along, one line, in
+`sinput_probe()`.
+
+**What was tried first, on the `bluetoothd` theory, and why both attempts
+failed to change anything**: forked BlueZ (`github.com/LeeNX/bluez`,
+branch `hog-ccc-notify-race`), patched `profiles/input/hog-lib.c` to
+register a report's notification callback in `report_reference_cb()`
+(right after Report Reference discovery) instead of after its CCC write
+completes in `report_ccc_written_cb()` -- closing the exact race
+described on 2026-09-24. Built via a proper Debian/RPi source package
+(`bluez_5.82-1.1+rpt2+hogfix1`, matching the rig's actual installed
+`5.82-1.1+rpt2` build, not a generic upstream rebuild) and HIL-tested: no
+change, 0/8 fresh-reconnect cycles still got a real FEATURES response.
+Also found and fixed a second real (but likewise not-the-cause) bug on
+the way: this driver's `sinput_raw_event()` called
+`complete(&sdev->caps_done)` unconditionally after
+`sinput_parse_features()`, even when that function rejected the payload
+as too short and left `caps->valid` false -- confirmed via `bluetoothd -d`
+that the peripheral's very first FEATURES reply typically lands *before*
+BLE ATT MTU negotiation finishes, arriving truncated to the default
+23-byte MTU; the truncated packet still passes the raw_event size/echo
+gate (both fields sit within the first 23 bytes) and so ended the
+retry-loop wait immediately, discarding every later full-size retry that
+would otherwise have succeeded. Gated the `complete()` on `caps->valid`
+instead. HIL-tested: still 0/8. Both fixes are real, both are still in
+the tree/fork, and neither was the answer.
+
+**Getting an actual answer required kernel-side tracing, not more
+userspace log correlation.** Built a temporary diagnostic BlueZ package
+(`+hogfix3`/`+hogfix4`, `fprintf(stderr, ...)` added directly to
+`profiles/input/hog-lib.c`'s `report_value_cb()` and to
+`src/shared/uhid.c`'s `bt_uhid_input()`) plus an unconditional trace print
+in this driver's own `sinput_raw_event()`. Correlated against
+`bluetoothd -d` (line-buffered via `stdbuf -oL -eL`; block-buffering to a
+file otherwise hides output until process exit, a real trap for this kind
+of live correlation) and confirmed, byte-exact, across a captured cycle:
+`bluetoothd` calls `bt_uhid_input()` six times for the FEATURES-response
+report, with the correct report ID (`numbered=1`, `id=2`), correct echo
+byte, and five of the six at the fully correct 64-byte report size --
+and every one of those six calls' underlying `write(2)` to the kernel's
+`/dev/uhid` succeeds (`ret=0`). This driver's `sinput_raw_event()` never
+saw any of them -- confirmed with the unconditional trace print above,
+which would have caught even a malformed one.
+
+That result (userspace write succeeds, driver callback never fires)
+pointed at the kernel, not BlueZ. Traced it directly on `rp4b-ble-hil`
+with `ftrace`/kprobes -- built into this kernel already
+(`CONFIG_KPROBES=y`, `CONFIG_FTRACE=y`; no packages installed, just
+`sudo` access to `/sys/kernel/debug/tracing`, one early mistake caught
+and corrected: writing to `kprobe_events` with a relative path after a
+failed `cd` silently creates a decoy regular file in `$HOME` instead of
+touching the real debugfs interface -- always use the absolute path).
+Kprobes on `uhid_char_write`, `hid_input_report`, `hid_report_raw_event`,
+and `sinput_raw_event` showed `uhid_char_write` firing on every one of
+the six writes and nothing downstream ever firing. Fetched
+`drivers/hid/uhid.c` and `drivers/hid/hid-core.c` from
+`raspberrypi/linux`'s `rpi-6.18.y` branch (matching the rig's
+`6.18.50+rpt-rpi-v8`) to read the actual dispatch path, since kprobes on
+symbol names alone couldn't show *why*: `uhid_dev_input2()` in `uhid.c`
+delegates to `hid_safe_input_report()`, which calls an internal
+`__hid_input_report()` that gates delivery on
+`down_trylock(&hid->driver_input_lock)` -- non-blocking, returns `-EBUSY`
+and silently drops the report on contention, no retry.
+
+That lock is exactly the one `hid_device_probe()` (the kernel's own
+wrapper that calls into every HID driver's `.probe()`, `hid-core.c`)
+holds for the *entire duration* of `.probe()`, by design, unless the
+driver explicitly releases it early. `<linux/hid.h>`'s own kerneldoc for
+`struct hid_driver` says so directly: "During probe, input will not be
+passed to raw_event unless `hid_device_io_start` is called." This
+driver's `sinput_probe()` calls `hid_hw_start()` and then spends up to
+five seconds waiting on exactly the kind of input report that comment
+describes -- but never called `hid_device_io_start()`, so the kernel
+structurally could not deliver it. Every plausible-looking
+BlueZ/timing/truncation theory above was real but beside the point: the
+response could arrive byte-perfect and it would still never reach
+`raw_event()`, for the entire span of `.probe()`, regardless of
+`bluetoothd`'s behavior.
+
+**Fix**: one call, `hid_device_io_start(hdev)`, added in `sinput_probe()`
+immediately after `hid_hw_start()` succeeds and before the FEATURES retry
+loop begins (`src/sinput_core.c`). Built via the existing podman/RPi
+kernel-headers pipeline (`docs/rpi-hil.md`'s pattern, no compiler on the
+rig itself), deployed as a `.deb`, and HIL-tested against `rp4b-ble-hil`
+on stock `bluez 5.82-1.1+rpt2` (no BlueZ patch needed at all): **10/10
+fresh-reconnect cycles got a real FEATURES response**, typically on the
+very first attempt (~1 second), against a 0/8 baseline immediately
+before it and 0/8 with either BlueZ-side fix from above. `dmesg` shows
+the actual negotiated capabilities line
+(`SInput protocol v1, poll rate 5000 us, sticks=1/1 triggers=1/1
+accel=1 (+/-8g) gyro=1 (+/-2000 dps) buttons=0xffffffff`), not the
+"assuming full capability set" fallback.
+
+**Net status**: fixed, HIL-verified, root cause was in this driver, not
+`bluetoothd`. The forked-BlueZ `hog-ccc-notify-race` patch and the
+`caps.valid`-gating fix above are both kept (real hardening against real,
+separately-confirmed issues -- an actual CCC-registration race and an
+actual pre-MTU-negotiation truncation case) but are no longer required
+for this specific symptom.
