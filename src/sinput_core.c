@@ -88,20 +88,69 @@ static void sinput_parse_features(struct sinput_device *sdev,
 	caps->left_trigger  = !!(flags0 & SI_FLAG0_LEFT_TRIGGER);
 	caps->right_trigger = !!(flags0 & SI_FLAG0_RIGHT_TRIGGER);
 
-	caps->touchpad = !!(flags1 & SI_FLAG1_TOUCHPAD);
 	caps->rgb_led  = !!(flags1 & SI_FLAG1_RGB_LED);
+
+	/*
+	 * Unlike every other field here, touchpad/touchpad_count/
+	 * touchpad_finger_count are written under touchpad_lock: a late
+	 * response changing these three *does* change what gets registered
+	 * (sinput_touchpad_request_reconcile() below), unlike every other
+	 * capability, where a late response is simply ignored for
+	 * registration purposes (see struct sinput_caps's comment in
+	 * sinput.h). sinput_touchpad_report() and the reconcile work both
+	 * read these same three fields under the same lock, so this write
+	 * must not race a read that mixes an old and a new response's values.
+	 *
+	 * Mirrors SDL_hidapi_sinput.c's own clamp exactly: touchpad_count is
+	 * clamped to [1, SINPUT_MAX_TOUCHPADS] whenever the device claims
+	 * touchpad support at all (a device that sets the flag bit but sends
+	 * count=0 still gets one touchpad, not zero -- SDL does the same),
+	 * and touchpad_count > 1 forces finger_count to 1 since each of the
+	 * two wire touch slots is then a separate pad's only finger, not two
+	 * fingers on one pad. See caps->touchpad_count's comment in sinput.h.
+	 */
+	{
+		unsigned long flags;
+
+		spin_lock_irqsave(&sdev->touchpad_lock, flags);
+		caps->touchpad = !!(flags1 & SI_FLAG1_TOUCHPAD);
+		if (caps->touchpad) {
+			caps->touchpad_count = clamp_val(data[SI_FEAT_TOUCHPAD_COUNT], 1,
+							  SINPUT_MAX_TOUCHPADS);
+			if (caps->touchpad_count > 1)
+				caps->touchpad_finger_count = 1;
+			else
+				caps->touchpad_finger_count = clamp_val(
+					data[SI_FEAT_TOUCHPAD_FINGERS], 1, SINPUT_MAX_TOUCHPADS);
+		} else {
+			caps->touchpad_count = 0;
+			caps->touchpad_finger_count = 0;
+		}
+		spin_unlock_irqrestore(&sdev->touchpad_lock, flags);
+	}
 
 	caps->button_mask = get_unaligned_le32(data + SI_FEAT_USAGE_MASK_0);
 
 	caps->valid = true;
 
 	hid_info(sdev->hdev,
-		 "SInput protocol v%u, poll rate %u us, sticks=%d/%d triggers=%d/%d accel=%d (+/-%ug) gyro=%d (+/-%u dps) buttons=0x%08x\n",
+		 "SInput protocol v%u, poll rate %u us, sticks=%d/%d triggers=%d/%d accel=%d (+/-%ug) gyro=%d (+/-%u dps) touchpad=%d (pads=%u fingers=%u) buttons=0x%08x\n",
 		 caps->protocol_version, caps->polling_rate_us,
 		 caps->left_stick, caps->right_stick,
 		 caps->left_trigger, caps->right_trigger,
 		 caps->accel, caps->accel_range, caps->gyro, caps->gyro_range,
+		 caps->touchpad, caps->touchpad_count, caps->touchpad_finger_count,
 		 caps->button_mask);
+
+	/*
+	 * Unlike every other capability parsed above, touchpad registration
+	 * must stay in sync with this response for the device's whole life,
+	 * not just at first registration -- schedules sinput_touchpad.c's
+	 * reconcile work, never runs it inline (this function is called from
+	 * raw_event, which cannot sleep). A no-op if the registered shape
+	 * already matches.
+	 */
+	sinput_touchpad_request_reconcile(sdev);
 }
 
 /*
@@ -279,6 +328,19 @@ static int sinput_probe(struct hid_device *hdev,
 	sdev->caps.player_leds = true;
 	sdev->caps.rgb_led = true;
 	sdev->caps.button_mask = ~0u;
+	/*
+	 * Set explicitly rather than left zero-initialized: this project has
+	 * hit the "existing cap field, never defaulted for the never-answers
+	 * case" bug three times already (player_leds/rgb_led, then rumble --
+	 * see docs/research.md), each time because a new capability field
+	 * quietly kept its zero/false default here while every sibling field
+	 * got set true. One touchpad with two fingers matches this HIL rig's
+	 * own emulator's real default (ref-ble-gamepad's SInput mode
+	 * auto-config), so it is a real value, not an arbitrary guess.
+	 */
+	sdev->caps.touchpad = true;
+	sdev->caps.touchpad_count = 1;
+	sdev->caps.touchpad_finger_count = 2;
 
 	/*
 	 * Must be ready before hid_hw_start(): that call enables raw_event
@@ -299,6 +361,14 @@ static int sinput_probe(struct hid_device *hdev,
 	 * sinput_send_output_command() below.
 	 */
 	mutex_init(&sdev->output_lock);
+
+	/*
+	 * Also must be ready before hid_hw_start(): a FEATURES response can
+	 * arrive as soon as raw_event can fire, and sinput_parse_features()
+	 * takes touchpad_lock on every one it parses. See sinput.h's
+	 * touchpad_lock comment for why this is a spinlock, not a mutex.
+	 */
+	sinput_touchpad_early_init(sdev);
 
 	/*
 	 * Deliberately do not request HID_CONNECT_HIDINPUT. This prevents
@@ -359,6 +429,17 @@ static int sinput_probe(struct hid_device *hdev,
 	}
 
 	/*
+	 * Not fatal to probe(), same reasoning as sinput_led_init() below: a
+	 * touchpad registration failure (e.g. input_mt_init_slots() running
+	 * out of memory) should not cost the user their gamepad, IMU, and
+	 * battery. Errors are logged internally by the reconcile work itself,
+	 * not returned here -- see sinput_touchpad.c. This is a no-op if
+	 * caps.touchpad is false, or if a FEATURES response during the retry
+	 * wait above already raced a reconcile in ahead of this call.
+	 */
+	sinput_touchpad_reconcile_and_wait(sdev);
+
+	/*
 	 * Not fatal to probe(): LEDs are an optional enhancement (same
 	 * reasoning as the battery's power_supply_powers() topology link).
 	 * A kernel without CONFIG_LEDS_CLASS_MULTICOLOR, or any other LED
@@ -391,6 +472,17 @@ stop:
 	 * comment in sinput.h for why this exists at all.
 	 */
 	cancel_work_sync(&sdev->ff_work);
+
+	/*
+	 * touchpad_lock/touchpad_reinit_work are always initialized by the
+	 * time this path can be reached (sinput_touchpad_early_init() runs
+	 * before hid_hw_start(), and every goto stop here happens after
+	 * that), unlike ff_work's more lenient "possibly still zeroed" case
+	 * above -- so this can unregister anything a raced-in reconcile
+	 * (from a FEATURES response during the retry wait) already built,
+	 * with no special-casing needed.
+	 */
+	sinput_touchpad_remove(sdev);
 
 	hid_hw_stop(hdev);
 	return ret;
@@ -425,6 +517,16 @@ static void sinput_remove(struct hid_device *hdev)
 	cancel_work_sync(&sdev->ff_work);
 
 	/*
+	 * Also before hid_hw_stop(): unregisters whatever touchpad input_dev(s)
+	 * are currently registered and cancels/waits out any reconcile work
+	 * in flight. Touchpad devices are not devm-managed (see
+	 * sinput_touchpad.c's top comment for why), so unlike the LED
+	 * classdevs and every other input_dev in this driver, nothing else
+	 * will ever unregister them if this doesn't.
+	 */
+	sinput_touchpad_remove(sdev);
+
+	/*
 	 * Deliberately no mutex_destroy(&sdev->output_lock) here: sdev and
 	 * the LED classdevs are devm-managed and only actually torn down
 	 * *after* this function returns, so LED sysfs files (and their
@@ -453,6 +555,7 @@ static int sinput_raw_event(struct hid_device *hdev,
 		if (size >= SINPUT_INPUT_REPORT_SIZE) {
 			sinput_input_report(sdev, data);
 			sinput_battery_update(sdev, data);
+			sinput_touchpad_report(sdev, data);
 		}
 	} else if (data[0] == SINPUT_REPORT_ID_CMD && size > SI_CMD_ECHO &&
 		   data[SI_CMD_ECHO] == SINPUT_CMD_FEATURES) {

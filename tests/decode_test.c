@@ -96,6 +96,48 @@ static void test_state_report(void)
 	CHECK(SI_GYRO_Z + 2 <= SINPUT_INPUT_REPORT_SIZE, "gyro z overruns report");
 }
 
+static void test_touchpad_report(void)
+{
+	uint8_t pkt[SINPUT_INPUT_REPORT_SIZE] = { 0 };
+
+	pkt[0] = SINPUT_REPORT_ID_STATE;
+
+	/* Touchpad 1 click held, touchpad 2 click not held. */
+	put_le32(pkt, SI_BUTTONS_0, (1u << SINPUT_BTN_IDX_TOUCHPAD1));
+
+	put_le16(pkt, SI_TOUCH1_X, (uint16_t)-16000);
+	put_le16(pkt, SI_TOUCH1_Y, 16000);
+	put_le16(pkt, SI_TOUCH1_P, 32767);
+	put_le16(pkt, SI_TOUCH2_X, 0);
+	put_le16(pkt, SI_TOUCH2_Y, 0);
+	put_le16(pkt, SI_TOUCH2_P, 0); /* pressure 0 -> finger 2 not down */
+
+	CHECK((int16_t)get_le16(pkt, SI_TOUCH1_X) == -16000, "touch1 x mismatch");
+	CHECK((int16_t)get_le16(pkt, SI_TOUCH1_Y) == 16000, "touch1 y mismatch");
+	CHECK(get_le16(pkt, SI_TOUCH1_P) == 32767, "touch1 pressure mismatch");
+	CHECK(get_le16(pkt, SI_TOUCH2_P) == 0, "touch2 pressure mismatch");
+
+	uint32_t buttons = pkt[SI_BUTTONS_0] | (pkt[SI_BUTTONS_0 + 1] << 8) |
+			   (pkt[SI_BUTTONS_0 + 2] << 16) | (pkt[SI_BUTTONS_0 + 3] << 24);
+	CHECK((buttons & (1u << SINPUT_BTN_IDX_TOUCHPAD1)) != 0, "TOUCHPAD1 click bit not set");
+	CHECK((buttons & (1u << SINPUT_BTN_IDX_TOUCHPAD2)) == 0, "TOUCHPAD2 click bit unexpectedly set");
+
+	/* Each field is 2 bytes wide -- check the whole span, not just the
+	 * start offset, or e.g. SI_TOUCH2_Y overlapping SI_TOUCH2_X's second
+	 * byte would slip through unnoticed (CodeRabbit).
+	 */
+	CHECK(SI_TOUCH1_X + 2 <= SI_TOUCH1_Y &&
+	      SI_TOUCH1_Y + 2 <= SI_TOUCH1_P &&
+	      SI_TOUCH1_P + 2 <= SI_TOUCH2_X &&
+	      SI_TOUCH2_X + 2 <= SI_TOUCH2_Y &&
+	      SI_TOUCH2_Y + 2 <= SI_TOUCH2_P,
+	      "touch slot offsets overlap");
+	CHECK(SI_TOUCH2_P + 2 <= SINPUT_INPUT_REPORT_SIZE, "touch2 pressure overruns report");
+	CHECK(SINPUT_BTN_IDX_TOUCHPAD1 != SINPUT_BTN_IDX_TOUCHPAD2,
+	      "touchpad click bit indices overlap");
+	CHECK(SINPUT_BTN_IDX_TOUCHPAD2 < 32, "touchpad click bit index overruns the 32-bit button word");
+}
+
 static void test_features_response(void)
 {
 	uint8_t pkt[SINPUT_INPUT_REPORT_SIZE] = { 0 };
@@ -252,6 +294,7 @@ static void test_haptic_command(void)
 int main(void)
 {
 	test_state_report();
+	test_touchpad_report();
 	test_features_response();
 	test_usage_mask();
 	test_output_report_layout();

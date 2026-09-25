@@ -24,6 +24,13 @@
 #define SINPUT_NUM_PLAYER_LEDS 4
 
 /*
+ * SDL_hidapi_sinput.c's SINPUT_MAX_ALLOWED_TOUCHPADS: the wire only ever
+ * carries two touch slots (SI_TOUCH1_x and SI_TOUCH2_x in
+ * sinput_protocol.h), so two is a hard ceiling, not a policy choice.
+ */
+#define SINPUT_MAX_TOUCHPADS 2
+
+/*
  * Capabilities decoded from the SInput feature response. Every field
  * defaults to "supported" so that a device which never answers the
  * features request (such as the generic bring-up test ID) keeps today's
@@ -64,7 +71,31 @@ struct sinput_caps {
 	bool right_stick;
 	bool left_trigger;
 	bool right_trigger;
+	/*
+	 * touchpad is the SI_FLAG1_TOUCHPAD capability bit; touchpad_count/
+	 * touchpad_finger_count come from SI_FEAT_TOUCHPAD_COUNT/FINGERS and
+	 * decide the *shape* of what gets registered: touchpad_count>1 means
+	 * N independent single-finger touchpads (one input_dev each),
+	 * touchpad_count==1 means one touchpad with touchpad_finger_count
+	 * fingers (one input_dev, multiple MT slots) -- mirrors
+	 * SDL_hidapi_sinput.c's own HIDAPI_DriverSInput_UpdateDevice()
+	 * clamp/branch on these same two values. Zero touchpad_count with
+	 * touchpad true would mean "capable but the response didn't say how
+	 * many" -- sinput_touchpad.c's reconcile logic treats that as "none"
+	 * rather than guessing a shape.
+	 *
+	 * Unlike every other field in this struct, these three are written
+	 * under sdev->touchpad_lock (see its comment in sinput.h), and a
+	 * later FEATURES response changing them *does* change what gets
+	 * registered -- sinput_touchpad.c's reconcile mechanism exists
+	 * specifically to keep the registered touchpad input_dev(s) in sync
+	 * with whatever these three fields say right now, not just at first
+	 * registration. This is the one capability where a late response is
+	 * not simply ignored for registration purposes.
+	 */
 	bool touchpad;
+	u8 touchpad_count;
+	u8 touchpad_finger_count;
 	bool rgb_led;
 	/*
 	 * Bit N set means the SInput usage mask reports button N (see
@@ -79,6 +110,43 @@ struct sinput_device {
 	struct hid_device *hdev;
 	struct input_dev *input;
 	struct input_dev *imu;
+	/*
+	 * Touchpad input device(s). Unlike every other input_dev in this
+	 * struct, these can be unregistered and rebuilt more than once during
+	 * the device's life -- see sinput_touchpad.c's top comment for the
+	 * full reasoning (a late FEATURES response can change the negotiated
+	 * shape after the first registration) and why touchpad_lock exists.
+	 * touchpad[0] is always the first (or only) touchpad if any is
+	 * registered; touchpad[1] only exists when the registered shape is
+	 * N>1 independent touchpads. touchpad_slots is the number of MT slots
+	 * actually registered on touchpad[0] (only meaningful when
+	 * touchpad[1] is NULL -- one touchpad, N fingers).
+	 *
+	 * All three fields, plus caps.touchpad/touchpad_count/
+	 * touchpad_finger_count while sinput_core.c's sinput_parse_features()
+	 * is updating them, are protected by touchpad_lock -- a plain
+	 * spinlock (not a mutex), because sinput_touchpad_report() is called
+	 * from raw_event, which this project has already found can run with
+	 * interrupts disabled on some transports (see sinput_ff.c's header
+	 * comment for the same finding applied to FF). Every acquisition
+	 * anywhere uses the _irqsave form for that reason, including the ones
+	 * from plain process context (sinput_probe(), the reconcile
+	 * workqueue) -- a spinlock that might be taken from interrupt context
+	 * anywhere must use _irqsave everywhere, or a same-CPU interrupt
+	 * could deadlock against a process-context holder.
+	 */
+	struct input_dev *touchpad[SINPUT_MAX_TOUCHPADS];
+	u8 touchpad_slots;
+	spinlock_t touchpad_lock;
+	/*
+	 * Rebuilds touchpad[]/touchpad_slots to match whatever caps.touchpad*
+	 * currently says, if that differs from what's registered. Scheduled
+	 * (never run inline) by sinput_touchpad_request_reconcile(), called
+	 * from sinput_parse_features() every time a FEATURES response is
+	 * parsed -- building/registering an input_dev sleeps, which raw_event
+	 * cannot do. See sinput_touchpad.c for the full design.
+	 */
+	struct work_struct touchpad_reinit_work;
 	struct sinput_caps caps;
 	struct completion caps_done;
 
@@ -167,6 +235,19 @@ int sinput_send_output_command(struct sinput_device *sdev, u8 cmd,
 int sinput_input_init(struct sinput_device *sdev);
 int sinput_imu_init(struct sinput_device *sdev);
 void sinput_input_report(struct sinput_device *sdev, const u8 *data);
+
+/*
+ * sinput_touchpad.c: touchpad input device(s), capability-gated on
+ * caps.touchpad and kept in sync with it for the device's entire life, not
+ * just at registration time -- see sinput_touchpad.c's top comment.
+ * Registration failure is logged and swallowed, never fatal, same as the
+ * LEDs/rumble.
+ */
+void sinput_touchpad_early_init(struct sinput_device *sdev);
+void sinput_touchpad_reconcile_and_wait(struct sinput_device *sdev);
+void sinput_touchpad_request_reconcile(struct sinput_device *sdev);
+void sinput_touchpad_remove(struct sinput_device *sdev);
+void sinput_touchpad_report(struct sinput_device *sdev, const u8 *data);
 
 /* sinput_battery.c: power_supply battery device. */
 int sinput_battery_init(struct sinput_device *sdev);

@@ -1,5 +1,5 @@
 obj-m := sinput.o
-sinput-y := sinput_core.o sinput_input.o sinput_battery.o sinput_led.o sinput_ff.o
+sinput-y := sinput_core.o sinput_input.o sinput_battery.o sinput_led.o sinput_ff.o sinput_touchpad.o
 
 # Single source of truth for the driver version is dkms.conf's
 # PACKAGE_VERSION (same value the .deb packaging scripts read) -- pulled in
