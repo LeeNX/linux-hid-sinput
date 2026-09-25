@@ -49,22 +49,27 @@ The module:
 
 1. binds to the SInput generic test VID/PID (`2E8A:10C6`) over USB or Bluetooth;
 2. uses the Linux HID framework;
-3. creates an explicit evdev input device instead of relying on `hid-generic`;
-4. sends the SInput `FEATURES` command on probe and decodes the response
+3. cross-checks the parsed HID report descriptor's own field sizes against
+   every report-size constant this driver assumes, logging a warning
+   (never fatal) on any mismatch -- HIL-verified: all three report sizes
+   (state, command response, output command) matched exactly on real
+   hardware (see [`docs/research.md`](docs/research.md));
+4. creates an explicit evdev input device instead of relying on `hid-generic`;
+5. sends the SInput `FEATURES` command on probe and decodes the response
    (protocol version, polling rate, sticks/triggers/accel/gyro/rumble/LED
    support) with a short timeout, falling back to "assume everything is
    present" if the device never answers;
-5. decodes the SInput state report;
-6. exposes only the buttons, D-pad, and sticks/triggers the feature response's
+6. decodes the SInput state report;
+7. exposes only the buttons, D-pad, and sticks/triggers the feature response's
    usage mask (or the fallback) says exist;
-7. exposes a separate IMU input device, with only the accel/gyro axes the
+8. exposes a separate IMU input device, with only the accel/gyro axes the
    device actually advertises;
-8. exposes battery/charge state as a standard Linux `power_supply` battery
+9. exposes battery/charge state as a standard Linux `power_supply` battery
    device (always present in every state report, no capability bit);
-9. exposes player LEDs (4 on/off `led_classdev`s) and an RGB indicator
-   (`led_classdev_multicolor`) as output commands, gated on the feature
-   response the same way the input side is;
-10. exposes rumble as a standard `FF_RUMBLE` force-feedback device
+10. exposes player LEDs (4 on/off `led_classdev`s) and an RGB indicator
+    (`led_classdev_multicolor`) as output commands, gated on the feature
+    response the same way the input side is;
+11. exposes rumble as a standard `FF_RUMBLE` force-feedback device
     (`input_ff_create_memless()`), gated on `caps.rumble` -- HIL-verified
     against real hardware: captured BLE traffic showed the exact expected
     output-report bytes (see [`docs/research.md`](docs/research.md)).
