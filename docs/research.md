@@ -1111,8 +1111,11 @@ the thing being verified.
 
 Not yet exercised: the two-independent-touchpads shape
 (`touchpad_count > 1`) -- this rig's emulator is hardcoded to 1 pad/2
-fingers by its own firmware config, so that branch of
-`sinput_touchpad_init()`/`sinput_touchpad_report()` is only exercised by
-`make check`'s decode test, not real hardware, until a device or
-emulator config that actually negotiates `touchpad_count=2` is
-available.
+fingers by its own firmware config. `make check`'s decode test only
+covers the wire offsets and click-bit indices used by that shape (byte
+layout, not registration/reporting behaviour); it never calls
+`sinput_touchpad_init()` or `sinput_touchpad_report()` at all (CodeRabbit).
+So the two-pad registration and reporting code paths are untested by
+anything right now, not just untested on real hardware -- both need a
+device or emulator config that actually negotiates `touchpad_count=2`
+before either can be exercised.

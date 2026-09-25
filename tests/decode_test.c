@@ -122,12 +122,15 @@ static void test_touchpad_report(void)
 	CHECK((buttons & (1u << SINPUT_BTN_IDX_TOUCHPAD1)) != 0, "TOUCHPAD1 click bit not set");
 	CHECK((buttons & (1u << SINPUT_BTN_IDX_TOUCHPAD2)) == 0, "TOUCHPAD2 click bit unexpectedly set");
 
-	/* The two touch slots and both touchpad click bits must be distinct
-	 * byte positions/bit numbers and stay inside the report/button word.
+	/* Each field is 2 bytes wide -- check the whole span, not just the
+	 * start offset, or e.g. SI_TOUCH2_Y overlapping SI_TOUCH2_X's second
+	 * byte would slip through unnoticed (CodeRabbit).
 	 */
-	CHECK(SI_TOUCH1_X != SI_TOUCH1_Y && SI_TOUCH1_Y != SI_TOUCH1_P &&
-	      SI_TOUCH1_P != SI_TOUCH2_X && SI_TOUCH2_X != SI_TOUCH2_Y &&
-	      SI_TOUCH2_Y != SI_TOUCH2_P,
+	CHECK(SI_TOUCH1_X + 2 <= SI_TOUCH1_Y &&
+	      SI_TOUCH1_Y + 2 <= SI_TOUCH1_P &&
+	      SI_TOUCH1_P + 2 <= SI_TOUCH2_X &&
+	      SI_TOUCH2_X + 2 <= SI_TOUCH2_Y &&
+	      SI_TOUCH2_Y + 2 <= SI_TOUCH2_P,
 	      "touch slot offsets overlap");
 	CHECK(SI_TOUCH2_P + 2 <= SINPUT_INPUT_REPORT_SIZE, "touch2 pressure overruns report");
 	CHECK(SINPUT_BTN_IDX_TOUCHPAD1 != SINPUT_BTN_IDX_TOUCHPAD2,

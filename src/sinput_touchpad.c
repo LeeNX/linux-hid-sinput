@@ -66,7 +66,16 @@ static struct input_dev *sinput_touchpad_create(struct sinput_device *sdev,
 
 	input_set_abs_params(tp, ABS_MT_POSITION_X, -32768, 32767, 0, 0);
 	input_set_abs_params(tp, ABS_MT_POSITION_Y, -32768, 32767, 0, 0);
-	input_set_abs_params(tp, ABS_MT_PRESSURE, 0, 32767, 0, 0);
+	/*
+	 * SI_TOUCH*_P (sinput_protocol.h) is decoded as a full u16, so the
+	 * wire can carry values up to 65535, not 32767 -- advertising 32767
+	 * here would let a real value above it reach userspace outside the
+	 * axis's own declared range (CodeRabbit). SDL_hidapi_sinput.c's own
+	 * `touch1P / 32768.0f` normalization treats 32768 as only a nominal
+	 * full-scale reference for its own float scaling, not a hard ceiling
+	 * on the wire type -- it doesn't clamp the raw value either.
+	 */
+	input_set_abs_params(tp, ABS_MT_PRESSURE, 0, 65535, 0, 0);
 
 	ret = input_mt_init_slots(tp, slots, INPUT_MT_POINTER);
 	if (ret)
@@ -102,6 +111,7 @@ int sinput_touchpad_init(struct sinput_device *sdev)
 		if (IS_ERR(tp))
 			return PTR_ERR(tp);
 		sdev->touchpad[1] = tp;
+		sdev->touchpad_slots = 1;
 	} else {
 		/* One touchpad, up to both wire touch slots as its fingers. */
 		int fingers = clamp_val(sdev->caps.touchpad_finger_count, 1,
@@ -111,6 +121,7 @@ int sinput_touchpad_init(struct sinput_device *sdev)
 		if (IS_ERR(tp))
 			return PTR_ERR(tp);
 		sdev->touchpad[0] = tp;
+		sdev->touchpad_slots = fingers;
 	}
 
 	return 0;
@@ -140,9 +151,11 @@ static void sinput_touchpad_report_slot(struct input_dev *tp, int slot,
  *     only slot, touch2 -> touchpad[1]'s only slot. Each pad's own click
  *     bit (SINPUT_BTN_IDX_TOUCHPAD1/2) reports on that same pad's BTN_LEFT.
  *   - touchpad[1] unset (one touchpad, N fingers): touch1 -> slot 0, touch2
- *     -> slot 1 (only touched if caps.touchpad_finger_count > 1). Only
- *     TOUCHPAD1's click bit applies -- there is no second physical pad to
- *     have its own click.
+ *     -> slot 1 (only touched if sdev->touchpad_slots > 1 -- the slot count
+ *     actually registered, frozen at init time; see its comment in
+ *     sinput.h for why this must not be re-read from caps.touchpad_finger_
+ *     count here). Only TOUCHPAD1's click bit applies -- there is no
+ *     second physical pad to have its own click.
  *
  * This mirrors SDL_hidapi_sinput.c's HIDAPI_DriverSInput_HandleStatePacket()
  * touchpad branch exactly (see its "touchpad > 0 || finger > 0" bump), and
@@ -180,7 +193,7 @@ void sinput_touchpad_report(struct sinput_device *sdev, const u8 *data)
 		input_sync(sdev->touchpad[1]);
 	} else {
 		sinput_touchpad_report_slot(sdev->touchpad[0], 0, x1, y1, p1);
-		if (sdev->caps.touchpad_finger_count > 1)
+		if (sdev->touchpad_slots > 1)
 			sinput_touchpad_report_slot(sdev->touchpad[0], 1, x2, y2, p2);
 		input_mt_sync_frame(sdev->touchpad[0]);
 		input_report_key(sdev->touchpad[0], BTN_LEFT,

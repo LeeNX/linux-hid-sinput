@@ -108,6 +108,19 @@ struct sinput_device {
 	 * the two wire touch slots map onto these.
 	 */
 	struct input_dev *touchpad[SINPUT_MAX_TOUCHPADS];
+	/*
+	 * Number of MT slots actually registered on touchpad[0] (only
+	 * meaningful when touchpad[1] is NULL -- one touchpad, N fingers).
+	 * Frozen by sinput_touchpad_init() at registration time; deliberately
+	 * NOT read back from caps.touchpad_finger_count at report time, same
+	 * reasoning as sinput_input_report()'s "gate on what actually got
+	 * registered" comment: a FEATURES response landing after
+	 * sinput_touchpad_init() already ran can still mutate caps in place
+	 * (there is no lock between this struct and raw_event for that), and
+	 * reading the live value here could disagree with the slot count the
+	 * touchpad device was actually registered with (CodeRabbit).
+	 */
+	u8 touchpad_slots;
 	struct sinput_caps caps;
 	struct completion caps_done;
 
