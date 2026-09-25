@@ -11,7 +11,13 @@
       only so far, v0.1.0 not yet cut
 
 ## 0.2 - protocol discovery
-- [ ] decode report descriptor and verify report sizes
+- [x] decode report descriptor and verify report sizes -- `hid_parse()`'s
+      result cross-checked at probe time (`sinput_verify_report_sizes()`)
+      against every `*_REPORT_SIZE` constant `sinput_protocol.h` assumes.
+      HIL-verified against `rp4b-ble-hil`: all three report sizes (state,
+      command response, output command) matched exactly. Report-level only
+      -- individual field offsets within each report are still not decoded
+      from the descriptor itself. See `research.md`, 2026-09-24.
 - [x] retrieve SInput capability/feature response
 - [x] capability-driven axis registration (sticks, triggers, accel, gyro)
 - [x] capability-driven button registration
