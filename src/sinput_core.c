@@ -174,17 +174,19 @@ static void sinput_verify_report_sizes(struct hid_device *hdev)
 		}
 
 		/*
-		 * report->size is the descriptor's data field width in bits,
-		 * excluding the report ID byte itself for numbered reports
-		 * (renum->numbered) -- the transport prepends that byte
-		 * separately on the wire, it is not part of any HID field.
-		 * sinput_protocol.h's *_REPORT_SIZE constants count the
-		 * report ID as byte 0 (see e.g. SI_PLUG_STATUS's comment),
-		 * so add it back in before comparing like for like.
+		 * hid_report_len() rounds report->size (the descriptor's data
+		 * field width, in bits) up to a whole byte -- report->size / 8
+		 * would silently truncate a report whose fields don't land on
+		 * a byte boundary, e.g. 505 bits reporting as 64 bytes instead
+		 * of the real 65 (CodeRabbit caught this) -- and adds back the
+		 * report ID byte the descriptor itself excludes (the transport
+		 * prepends it separately on the wire; it is not a HID field).
+		 * sinput_protocol.h's *_REPORT_SIZE constants count the report
+		 * ID as byte 0 (see e.g. SI_PLUG_STATUS's comment), so this
+		 * now compares like for like without hand-rolling the same
+		 * arithmetic the kernel already provides.
 		 */
-		descriptor_bytes = report->size / 8;
-		if (renum->numbered)
-			descriptor_bytes += 1;
+		descriptor_bytes = hid_report_len(report);
 
 		if (descriptor_bytes != exp->size)
 			hid_warn(hdev,
