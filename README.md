@@ -72,17 +72,20 @@ The module:
 11. exposes rumble as a standard `FF_RUMBLE` force-feedback device
     (`input_ff_create_memless()`), gated on `caps.rumble` -- HIL-verified
     against real hardware: captured BLE traffic showed the exact expected
-    output-report bytes (see [`docs/research.md`](docs/research.md)).
+    output-report bytes (see [`docs/research.md`](docs/research.md));
+12. exposes one or more touchpad input devices (one per pad, or one shared
+    multi-touch pad, depending on what the feature response says), rebuilt
+    live if a later response changes that shape -- HIL-verified against
+    real hardware (see [`docs/research.md`](docs/research.md)).
 
 The source lives in `src/`, one file per subsystem (`sinput_core.c` for
 probe/dispatch and the FEATURES/output-command plumbing, `sinput_input.c`,
-`sinput_battery.c`, `sinput_led.c`, `sinput_ff.c`), Kbuild-linked into a
-single `sinput.ko` -- see `src/Makefile`.
+`sinput_battery.c`, `sinput_led.c`, `sinput_ff.c`, `sinput_touchpad.c`),
+Kbuild-linked into a single `sinput.ko` -- see `src/Makefile`.
 
-Touchpads are intentionally left as follow-up work. The feature-response
-layout is reverse-derived from SDL's SInput HIDAPI driver (see
-[`docs/research.md`](docs/research.md)), not from a stable spec, so treat
-the byte offsets as best-effort.
+The feature-response layout is reverse-derived from SDL's SInput HIDAPI
+driver (see [`docs/research.md`](docs/research.md)), not from a stable
+spec, so treat the byte offsets as best-effort.
 
 ## Adding your own VID/PID
 
@@ -376,10 +379,18 @@ feature set as evidence that SInput is ready for upstream Linux.
       [`docs/research.md`](docs/research.md))
 * [x] RGB LED (HIL-verified against real hardware; see
       [`docs/research.md`](docs/research.md))
-* [ ] touchpads
+* [x] touchpads (one input_dev per pad or per finger depending on the
+      feature response's shape, reconciled live if a late response changes
+      it; HIL-verified against real hardware; see
+      [`docs/research.md`](docs/research.md))
 * [x] output-command serialization and locking (`output_lock` mutex, added
       once player/RGB LED became the second and third output commands; see
       [`docs/research.md`](docs/research.md))
+* [x] runtime VID/PID registration for DIY builds, no module rebuild (udev
+      rule + `/etc/sinput/ids.conf`; see
+      [Adding your own VID/PID](#adding-your-own-vidpid))
+* [x] diagnostics via the kernel's dynamic debug facility, no custom debug
+      ABI (see [Diagnostics](#diagnostics))
 * [ ] USB + Bluetooth transport testing (Bluetooth binding added and verified
       against a real device over BLE; USB still untested; see
       [`docs/research.md`](docs/research.md))
