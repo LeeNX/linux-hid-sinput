@@ -1113,9 +1113,92 @@ Not yet exercised: the two-independent-touchpads shape
 (`touchpad_count > 1`) -- this rig's emulator is hardcoded to 1 pad/2
 fingers by its own firmware config. `make check`'s decode test only
 covers the wire offsets and click-bit indices used by that shape (byte
-layout, not registration/reporting behaviour); it never calls
-`sinput_touchpad_init()` or `sinput_touchpad_report()` at all (CodeRabbit).
-So the two-pad registration and reporting code paths are untested by
-anything right now, not just untested on real hardware -- both need a
-device or emulator config that actually negotiates `touchpad_count=2`
-before either can be exercised.
+layout, not registration/reporting behaviour); it never calls the
+touchpad build/report functions at all (CodeRabbit). So the two-pad
+registration and reporting code paths are untested by anything right
+now, not just untested on real hardware -- both need a device or
+emulator config that actually negotiates `touchpad_count=2` before
+either can be exercised.
+
+### 2026-09-25: touchpad re-registration on a late/changed FEATURES response
+
+CodeRabbit flagged a real gap the `touchpad_slots` fix above (same day,
+entry above) only partially closed: `sinput_probe()`'s FEATURES retry
+loop can give up and fall back to "assume everything present" (1 pad, 2
+fingers) before a real response arrives, and once it does arrive later
+-- entirely possible, this rig's FEATURES negotiation has never been
+100% reliable even after the `hid_device_io_start()` fix -- it can
+report a genuinely different shape (e.g. 2 independent pads instead of
+1 pad/2 fingers). Every other capability in this driver explicitly
+documents "a late response is ignored for registration purposes, caps
+just gets mutated in place" (see `struct sinput_caps`'s comment in
+`sinput.h`) as a deliberate, accepted limitation. Touchpad is the one
+capability where that's not good enough: with only one physical pad
+ever registered, `SINPUT_BTN_IDX_TOUCHPAD2`'s click bit would have no
+device to land on at all if the real device turns out to have two pads.
+
+Asked directly whether to just document this residual gap (matching the
+project's existing precedent for the same general class of problem,
+e.g. `accel_range`/`gyro_range`) or actually fix it; the user chose to
+fix it.
+
+Implemented a proper reconcile mechanism in `sinput_touchpad.c`, not a
+quick patch: `sdev->touchpad_lock` (a spinlock, not a mutex --
+`sinput_touchpad_report()` runs from `raw_event`, which this project's
+own FF investigation already found can run with interrupts disabled on
+some transports) now protects `sdev->touchpad[]`/`touchpad_slots`
+*and* the three touchpad-shaped fields of `caps` while
+`sinput_parse_features()` writes them. Every FEATURES response now
+schedules a workqueue pass (`sinput_touchpad_request_reconcile()` --
+raw_event cannot sleep, and building/registering an `input_dev` does)
+that compares the negotiated shape against what's currently registered
+and, only if they differ, builds the new shape, swaps the pointers under
+the lock, then unregisters the old one outside it. The swap-then-free
+ordering (build outside the lock, swap under it, free outside it again,
+*after* the swap) is what makes it safe to free the old `input_dev`s: by
+the time the swap's critical section ends, any `sinput_touchpad_report()`
+call that observed the old pointers must already have finished using
+them, because it holds the very same lock across its own `input_report_abs()`/
+`input_sync()` calls, not just around reading the pointers.
+
+This also meant touchpad input_devs could no longer be
+`devm_input_allocate_device()`'d like every other input_dev in this
+driver -- devm's automatic cleanup assumes one allocate-register cycle
+tied to the parent's own teardown, not repeated register/unregister
+cycles within the same device's lifetime. Switched to plain
+`input_allocate_device()`/`input_unregister_device()`, with a new
+`sinput_touchpad_remove()` explicitly tearing down whatever is currently
+registered from both `sinput_remove()` and `sinput_probe()`'s failure
+path -- nothing else will do it now that devm doesn't own them.
+
+One accepted residual gap, documented rather than chased further: a
+FEATURES response could theoretically race in during the narrow window
+between `sinput_touchpad_remove()`'s `cancel_work_sync()` and
+`hid_hw_stop()` actually quiescing `raw_event`, scheduling one more
+reconcile pass that builds a device nothing will ever tear down. The
+work function checks `sdev->removing` (read without its usual
+`output_lock`, a deliberate best-effort-only check) to make this
+vanishingly unlikely rather than impossible; the worst case is one
+orphaned, leaked `input_dev` at module removal time, not a
+use-after-free, and closing it completely would mean sharing a second
+lock domain with `output_lock` for a window this narrow.
+
+**Verification**: the two-pad-to-one-pad (or reverse) transition itself
+could not be HIL-tested for the same reason noted above -- this rig's
+emulator firmware hardcodes 1 pad/2 fingers with no way to command a
+different negotiated shape at runtime. What *was* verified on
+`rp4b-ble-hil`: `make check` still passes; the module builds clean
+(podman/RPi-headers pipeline, no new warnings); the normal
+probe-to-attach path still works end to end through the new
+schedule-work-and-flush-work mechanism (touchpad registers, live touch
+decode via the NuS `touch` command still byte-exact, same as the
+original verification pass); and 5 full disconnect/reconnect cycles
+(all 5 landed on the FEATURES-timeout fallback path this round --
+still not 100% reliable, consistent with every prior entry on this
+topic) each drove a full `sinput_touchpad_early_init()` ->
+`sinput_touchpad_reconcile_and_wait()` -> `sinput_touchpad_remove()`
+cycle through the new locking/workqueue machinery with `dmesg` staying
+completely clean -- no warnings, no lockdep complaints, no hangs. The
+actual shape-*change* code path itself remains verified by inspection
+and the locking argument above, not by observing it happen on real
+hardware.
