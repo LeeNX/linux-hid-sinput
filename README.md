@@ -106,7 +106,8 @@ happens automatically:
   The installed udev rule ([`udev/99-sinput.rules`](udev/99-sinput.rules),
   via [`scripts/sinput-claim-id.sh`](scripts/sinput-claim-id.sh)) reads that
   file on every matching HID "add" event and rebinds the device from
-  `hid-generic` to `sinput`. No module rebuild, no reboot.
+  whatever currently claims it (`hid-generic`, in the common case) to
+  `sinput`. No module rebuild, no reboot.
   * The two `.deb` packages install this automatically.
   * For a plain `make`/[`dkms-install.sh`](scripts/dkms-install.sh) install,
     run [`scripts/install-udev-support.sh`](scripts/install-udev-support.sh)
@@ -123,6 +124,40 @@ happens automatically:
 
   (bus `0003` is USB, `0005` is Bluetooth; find your device's actual
   vendor/product/instance name under `/sys/bus/hid/drivers/hid-generic/`.)
+
+## Diagnostics
+
+The driver has no custom debug ABI (no module parameter, no debugfs file) --
+it uses the kernel's own dynamic debug facility (`CONFIG_DYNAMIC_DEBUG`,
+enabled on effectively every distro kernel) for every diagnostic message.
+Off by default, near-zero overhead when off (jump-label gated), and doesn't
+need a module reload or reboot to turn on or off.
+
+Enable everything the driver logs:
+
+```sh
+echo 'module sinput +p' | sudo tee /sys/kernel/debug/dynamic_debug/control
+```
+
+Or scope it to one thing, e.g. only the raw report hex dump (the highest-
+signal single thing to enable when a decode looks wrong -- see exactly what's
+on the wire without an external BLE/USB capture):
+
+```sh
+echo 'func sinput_raw_event +p' | sudo tee /sys/kernel/debug/dynamic_debug/control
+```
+
+`dmesg -w` (or `journalctl -kf`) to watch it live. Turn it back off the same
+way, with `-p` instead of `+p`. See
+[Documentation/admin-guide/dynamic-debug-howto.rst](https://www.kernel.org/doc/html/latest/admin-guide/dynamic-debug-howto.html)
+for the full `<query>` syntax (by function, file, line range, or module).
+
+What's covered: probe (device identity, FEATURES request/response retries),
+every raw incoming report (hex dump), decoded gamepad/touchpad state per
+report, touchpad reconcile decisions (see
+[`src/sinput_touchpad.c`](src/sinput_touchpad.c)'s top comment for why that
+can happen more than once per device), and every outgoing command (rumble,
+player LEDs, RGB LED).
 
 ## Why a kernel driver?
 

@@ -47,6 +47,8 @@ static int sinput_player_led_set(struct led_classdev *led, enum led_brightness v
 	else
 		sdev->player_leds_state |= BIT(led_index);
 	player_num = hweight8(sdev->player_leds_state);
+	hid_dbg(sdev->hdev, "led: player LED %u -> %s (player_num=%u)\n", /* README.md "Diagnostics" */
+		led_index, value == LED_OFF ? "off" : "on", player_num);
 	ret = sinput_send_output_command(sdev, SINPUT_CMD_PLAYER_LED, &player_num, 1);
 	mutex_unlock(&sdev->output_lock);
 
@@ -112,6 +114,9 @@ static int sinput_rgb_led_set(struct led_classdev *led, enum led_brightness brig
 	payload[0] = sinput_rgb_scale(mc_cdev->subled_info[0].brightness);
 	payload[1] = sinput_rgb_scale(mc_cdev->subled_info[1].brightness);
 	payload[2] = sinput_rgb_scale(mc_cdev->subled_info[2].brightness);
+
+	/* See README.md "Diagnostics". */
+	hid_dbg(sdev->hdev, "led: rgb -> r=%u g=%u b=%u\n", payload[0], payload[1], payload[2]);
 
 	mutex_lock(&sdev->output_lock);
 	ret = sinput_send_output_command(sdev, SINPUT_CMD_RGB_LED, payload, sizeof(payload));

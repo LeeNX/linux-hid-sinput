@@ -240,6 +240,14 @@ static void sinput_touchpad_reinit_work_fn(struct work_struct *work)
 	need_change = !sinput_touchpad_shape_matches(sdev, touchpad, count, fingers);
 	spin_unlock_irqrestore(&sdev->touchpad_lock, flags);
 
+	/* See README.md "Diagnostics" -- the exact thing to enable when
+	 * debugging a late-FEATURES-response shape change (see this file's
+	 * top comment).
+	 */
+	hid_dbg(sdev->hdev,
+		"touchpad reconcile: touchpad=%d count=%u fingers=%u need_change=%d\n",
+		touchpad, count, fingers, need_change);
+
 	if (!need_change)
 		return;
 
@@ -260,6 +268,9 @@ static void sinput_touchpad_reinit_work_fn(struct work_struct *work)
 		hid_info(sdev->hdev, "SInput touchpad (re)registration failed: %d\n", ret);
 		return;
 	}
+
+	hid_dbg(sdev->hdev, "touchpad reconcile: built shape slots=%u second_pad=%s\n",
+		new_shape.slots, new_shape.pad[1] ? "yes" : "no");
 
 	spin_lock_irqsave(&sdev->touchpad_lock, flags);
 	old0 = sdev->touchpad[0];
@@ -411,4 +422,15 @@ void sinput_touchpad_report(struct sinput_device *sdev, const u8 *data)
 	}
 
 	spin_unlock_irqrestore(&sdev->touchpad_lock, flags);
+
+	/* See README.md "Diagnostics". Logged after unlocking, from the
+	 * already-copied locals above, so this never extends the irqsave
+	 * critical section (see this file's top comment on why that section
+	 * must stay as short as sinput_touchpad_report_slot()/input_sync()
+	 * themselves).
+	 */
+	hid_dbg(sdev->hdev, "touch: t1=(%d,%d,%u) t2=(%d,%d,%u) tp1_btn=%d tp2_btn=%d\n",
+		x1, y1, p1, x2, y2, p2,
+		!!(buttons & BIT(SINPUT_BTN_IDX_TOUCHPAD1)),
+		!!(buttons & BIT(SINPUT_BTN_IDX_TOUCHPAD2)));
 }
