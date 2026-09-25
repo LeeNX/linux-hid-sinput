@@ -109,6 +109,14 @@ void sinput_battery_update(struct sinput_device *sdev, const u8 *data)
 	sdev->battery_capacity = new_capacity;
 	spin_unlock_irqrestore(&sdev->battery_lock, flags);
 
+	/* See README.md "Diagnostics". Only on an actual change, not every
+	 * report -- plug/capacity is otherwise unchanged far more often than
+	 * not, unlike buttons/axes.
+	 */
+	if (battery_changed)
+		hid_dbg(sdev->hdev, "battery: plug_status=%u capacity=%u%%\n",
+			new_plug_status, new_capacity);
+
 	/*
 	 * sdev->battery is only set once sinput_battery_init() completes; a
 	 * report can land before that (same race sdev->input has in

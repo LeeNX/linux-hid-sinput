@@ -14,6 +14,7 @@
 #include <linux/hid.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/printk.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/usb.h>
@@ -298,6 +299,14 @@ static int sinput_probe(struct hid_device *hdev,
 	init_completion(&sdev->caps_done);
 
 	/*
+	 * Enable with e.g. `echo module sinput +p > /sys/kernel/debug/dynamic_debug/control`
+	 * (see README.md "Diagnostics"). Off by default via CONFIG_DYNAMIC_DEBUG's
+	 * jump-label gating -- effectively free when not enabled.
+	 */
+	hid_dbg(hdev, "probe: bus 0x%04x vendor 0x%04x product 0x%04x version 0x%04x\n",
+		hdev->bus, hdev->vendor, hdev->product, hdev->version);
+
+	/*
 	 * Until a feature response says otherwise, assume every axis, the
 	 * IMU, and every output command (LEDs, rumble) are present. This
 	 * preserves today's behaviour for devices that do not implement the
@@ -401,14 +410,20 @@ static int sinput_probe(struct hid_device *hdev,
 
 	/* See SINPUT_FEATURES_RETRY_COUNT's comment for why this retries. */
 	for (i = 0; i < SINPUT_FEATURES_RETRY_COUNT; i++) {
+		hid_dbg(hdev, "SInput FEATURES request attempt %d/%d\n",
+			i + 1, SINPUT_FEATURES_RETRY_COUNT);
 		ret = sinput_request_features(sdev);
 		if (ret < 0) {
 			hid_info(hdev, "could not send SInput features request: %d\n", ret);
 			break;
 		}
 		if (wait_for_completion_timeout(&sdev->caps_done,
-						msecs_to_jiffies(SINPUT_FEATURES_RETRY_MS)))
+						msecs_to_jiffies(SINPUT_FEATURES_RETRY_MS))) {
+			hid_dbg(hdev, "SInput FEATURES response received on attempt %d\n", i + 1);
 			break;
+		}
+		hid_dbg(hdev, "SInput FEATURES attempt %d timed out after %d ms\n",
+			i + 1, SINPUT_FEATURES_RETRY_MS);
 	}
 	if (!sdev->caps.valid)
 		hid_info(hdev, "no SInput features response after %d attempt(s), assuming full capability set\n",
@@ -550,6 +565,15 @@ static int sinput_raw_event(struct hid_device *hdev,
 
 	if (size < 1)
 		return 0;
+
+	/*
+	 * See README.md "Diagnostics". Dumps every raw report byte-for-byte
+	 * against sinput_protocol.h's offsets -- the highest-signal single
+	 * thing to enable when a decode looks wrong, since it needs no
+	 * external BLE/USB capture to see exactly what's on the wire.
+	 */
+	hid_dbg(hdev, "raw_event: report id %u size %d\n", data[0], size);
+	print_hex_dump_debug("sinput raw: ", DUMP_PREFIX_OFFSET, 16, 1, data, size, false);
 
 	if (data[0] == SINPUT_REPORT_ID_STATE) {
 		if (size >= SINPUT_INPUT_REPORT_SIZE) {

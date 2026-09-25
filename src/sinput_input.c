@@ -71,6 +71,17 @@ void sinput_input_report(struct sinput_device *sdev, const u8 *data)
 
 	buttons = get_unaligned_le32(data + SI_BUTTONS_0);
 
+	/* See README.md "Diagnostics". Raw decode regardless of what this
+	 * device actually registered, so a mis-registered/missing axis still
+	 * shows its true wire value here.
+	 */
+	hid_dbg(sdev->hdev,
+		"state: buttons=0x%08x lx=%d ly=%d rx=%d ry=%d lt=%d rt=%d\n",
+		buttons,
+		si_s16(data, SI_LEFT_X), si_s16(data, SI_LEFT_Y),
+		si_s16(data, SI_RIGHT_X), si_s16(data, SI_RIGHT_Y),
+		si_s16(data, SI_LEFT_TRIGGER), si_s16(data, SI_RIGHT_TRIGGER));
+
 	/*
 	 * Gate on what actually got registered (in->keybit/absbit), not on
 	 * sdev->caps: a FEATURES response can arrive after sinput_input_init()

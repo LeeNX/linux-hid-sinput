@@ -61,6 +61,11 @@ static void sinput_ff_work(struct work_struct *work)
 	payload[SI_OUT_HAPTIC_RIGHT_AMP - SI_OUT_HAPTIC_TYPE]   = weak >> 8;
 	payload[SI_OUT_HAPTIC_RIGHT_BRAKE - SI_OUT_HAPTIC_TYPE] = 0;
 
+	/* See README.md "Diagnostics". */
+	hid_dbg(sdev->hdev, "ff: sending HAPTIC left_amp=%u right_amp=%u\n",
+		payload[SI_OUT_HAPTIC_LEFT_AMP - SI_OUT_HAPTIC_TYPE],
+		payload[SI_OUT_HAPTIC_RIGHT_AMP - SI_OUT_HAPTIC_TYPE]);
+
 	mutex_lock(&sdev->output_lock);
 	sinput_send_output_command(sdev, SINPUT_CMD_HAPTIC, payload, sizeof(payload));
 	mutex_unlock(&sdev->output_lock);
@@ -85,6 +90,10 @@ static int sinput_play_effect(struct input_dev *in, void *data, struct ff_effect
 	sdev->ff_strong_magnitude = effect->u.rumble.strong_magnitude;
 	sdev->ff_weak_magnitude = effect->u.rumble.weak_magnitude;
 	spin_unlock_irqrestore(&sdev->ff_lock, flags);
+
+	/* See README.md "Diagnostics". */
+	hid_dbg(sdev->hdev, "ff: play_effect strong=%u weak=%u\n",
+		effect->u.rumble.strong_magnitude, effect->u.rumble.weak_magnitude);
 
 	/*
 	 * Safe to call from this context (unlike everything ff_work itself
