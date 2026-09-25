@@ -64,6 +64,26 @@
 #define SI_GYRO_X        29
 #define SI_GYRO_Y        31
 #define SI_GYRO_Z        33
+/*
+ * Two independent touch slots. Whether they represent two separate
+ * one-finger touchpads or two fingers on one touchpad is a capability
+ * decision (SI_FEAT_TOUCHPAD_COUNT/FINGERS below), not a wire-format one --
+ * the wire always carries exactly these two X/Y/pressure triples. Confirmed
+ * against both SDL_hidapi_sinput.c's SINPUT_REPORT_IDX_TOUCH1_X et al. and
+ * leenx-foss/Bluepad32/hil's ref-ble-gamepad/BleSInput.h's SINPUT_IN_IDX_
+ * TOUCH1_X et al. (the latter numbered from the byte after the report ID;
+ * +1 from those values lines up exactly with the offsets below, and every
+ * other already-verified offset in this file lines up the same way, e.g.
+ * its SINPUT_IN_IDX_PLUG_STATUS=0 vs this file's SI_PLUG_STATUS=1). X/Y are
+ * signed 16-bit spanning the full pad; pressure is unsigned 16-bit, 0
+ * meaning "no finger" (SDL: `touch1P > 0` is its presence test).
+ */
+#define SI_TOUCH1_X      35
+#define SI_TOUCH1_Y      37
+#define SI_TOUCH1_P      39
+#define SI_TOUCH2_X      41
+#define SI_TOUCH2_Y      43
+#define SI_TOUCH2_P      45
 
 /* Output command requests (SINPUT_REPORT_ID_OUTPUT), byte 1 selects command. */
 #define SINPUT_CMD_HAPTIC     0x01
@@ -183,5 +203,19 @@
 #define SINPUT_BTN_IDX_BACK          17
 #define SINPUT_BTN_IDX_GUIDE         18
 #define SINPUT_BTN_IDX_CAPTURE       19
+/*
+ * Touchpad click (the digital "press down on the pad" button, separate from
+ * finger presence/position above), one bit per possible touchpad. Unlike
+ * the face-button case, this bit numbering agrees across every source
+ * checked: SDL_hidapi_sinput.c's SINPUT_BUTTONMASK_TOUCHPAD1/2 (0x40/0x80 in
+ * usage-mask byte 2 -- i.e. bits 22/23 of the 32-bit word), and
+ * ref-ble-gamepad's BleSInput.h SINPUT_BTN2_TOUCHPAD1/2 (same 0x40/0x80 in
+ * its own byte-2 mask) and BleGamepad.cpp's actual button-16/17 wiring.
+ * Deliberately not added to sinput_input.c's sinput_buttons[] table: like
+ * hid-playstation.c's touchpad click, this belongs to the touchpad's own
+ * input_dev (BTN_LEFT), not the main gamepad's.
+ */
+#define SINPUT_BTN_IDX_TOUCHPAD1     22
+#define SINPUT_BTN_IDX_TOUCHPAD2     23
 
 #endif /* SINPUT_PROTOCOL_H */

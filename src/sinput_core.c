@@ -91,16 +91,39 @@ static void sinput_parse_features(struct sinput_device *sdev,
 	caps->touchpad = !!(flags1 & SI_FLAG1_TOUCHPAD);
 	caps->rgb_led  = !!(flags1 & SI_FLAG1_RGB_LED);
 
+	/*
+	 * Mirrors SDL_hidapi_sinput.c's own clamp exactly: touchpad_count is
+	 * clamped to [1, SINPUT_MAX_TOUCHPADS] whenever the device claims
+	 * touchpad support at all (a device that sets the flag bit but sends
+	 * count=0 still gets one touchpad, not zero -- SDL does the same),
+	 * and touchpad_count > 1 forces finger_count to 1 since each of the
+	 * two wire touch slots is then a separate pad's only finger, not two
+	 * fingers on one pad. See caps->touchpad_count's comment in sinput.h.
+	 */
+	if (caps->touchpad) {
+		caps->touchpad_count = clamp_val(data[SI_FEAT_TOUCHPAD_COUNT], 1,
+						  SINPUT_MAX_TOUCHPADS);
+		if (caps->touchpad_count > 1)
+			caps->touchpad_finger_count = 1;
+		else
+			caps->touchpad_finger_count = clamp_val(
+				data[SI_FEAT_TOUCHPAD_FINGERS], 1, SINPUT_MAX_TOUCHPADS);
+	} else {
+		caps->touchpad_count = 0;
+		caps->touchpad_finger_count = 0;
+	}
+
 	caps->button_mask = get_unaligned_le32(data + SI_FEAT_USAGE_MASK_0);
 
 	caps->valid = true;
 
 	hid_info(sdev->hdev,
-		 "SInput protocol v%u, poll rate %u us, sticks=%d/%d triggers=%d/%d accel=%d (+/-%ug) gyro=%d (+/-%u dps) buttons=0x%08x\n",
+		 "SInput protocol v%u, poll rate %u us, sticks=%d/%d triggers=%d/%d accel=%d (+/-%ug) gyro=%d (+/-%u dps) touchpad=%d (pads=%u fingers=%u) buttons=0x%08x\n",
 		 caps->protocol_version, caps->polling_rate_us,
 		 caps->left_stick, caps->right_stick,
 		 caps->left_trigger, caps->right_trigger,
 		 caps->accel, caps->accel_range, caps->gyro, caps->gyro_range,
+		 caps->touchpad, caps->touchpad_count, caps->touchpad_finger_count,
 		 caps->button_mask);
 }
 
@@ -279,6 +302,19 @@ static int sinput_probe(struct hid_device *hdev,
 	sdev->caps.player_leds = true;
 	sdev->caps.rgb_led = true;
 	sdev->caps.button_mask = ~0u;
+	/*
+	 * Set explicitly rather than left zero-initialized: this project has
+	 * hit the "existing cap field, never defaulted for the never-answers
+	 * case" bug three times already (player_leds/rgb_led, then rumble --
+	 * see docs/research.md), each time because a new capability field
+	 * quietly kept its zero/false default here while every sibling field
+	 * got set true. One touchpad with two fingers matches this HIL rig's
+	 * own emulator's real default (ref-ble-gamepad's SInput mode
+	 * auto-config), so it is a real value, not an arbitrary guess.
+	 */
+	sdev->caps.touchpad = true;
+	sdev->caps.touchpad_count = 1;
+	sdev->caps.touchpad_finger_count = 2;
 
 	/*
 	 * Must be ready before hid_hw_start(): that call enables raw_event
@@ -357,6 +393,17 @@ static int sinput_probe(struct hid_device *hdev,
 		if (ret)
 			goto stop;
 	}
+
+	/*
+	 * Not fatal to probe(), same reasoning as sinput_led_init() below: a
+	 * touchpad registration failure (e.g. input_mt_init_slots() running
+	 * out of memory) should not cost the user their gamepad, IMU, and
+	 * battery. sinput_touchpad_init() itself is a no-op (returns 0) when
+	 * caps.touchpad is false, so this call is unconditional.
+	 */
+	ret = sinput_touchpad_init(sdev);
+	if (ret)
+		hid_info(hdev, "SInput touchpad registration failed: %d\n", ret);
 
 	/*
 	 * Not fatal to probe(): LEDs are an optional enhancement (same
@@ -453,6 +500,7 @@ static int sinput_raw_event(struct hid_device *hdev,
 		if (size >= SINPUT_INPUT_REPORT_SIZE) {
 			sinput_input_report(sdev, data);
 			sinput_battery_update(sdev, data);
+			sinput_touchpad_report(sdev, data);
 		}
 	} else if (data[0] == SINPUT_REPORT_ID_CMD && size > SI_CMD_ECHO &&
 		   data[SI_CMD_ECHO] == SINPUT_CMD_FEATURES) {

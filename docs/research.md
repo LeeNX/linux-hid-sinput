@@ -927,3 +927,192 @@ accel=1 (+/-8g) gyro=1 (+/-2000 dps) buttons=0xffffffff`), not the
 separately-confirmed issues -- an actual CCC-registration race and an
 actual pre-MTU-negotiation truncation case) but are no longer required
 for this specific symptom.
+
+### 2026-09-25: IMU live registration -- now HIL-verified, closing the 2026-09-24 gap
+
+The 2026-09-24 IMU entry above confirmed the `accel_range`/`gyro_range`
+parsing and scaling arithmetic but could not observe a live
+`input_dev` actually carrying `INPUT_PROP_ACCELEROMETER` and a
+populated resolution, because the FEATURES response kept losing the
+race against `probe()`'s timeout. That race is gone now that
+`hid_device_io_start()` is called (previous entry, shipped in 0.2.2):
+verified directly on `rp4b-ble-hil`, rebuilding the current `main`
+(0.2.2) into a binary `.deb` via the existing podman/RPi-headers
+pipeline (`docs/rpi-hil.md`) and reloading it on the rig.
+
+One process wrinkle worth recording: `docs/rpi-hil.md`'s documented
+`KDIR` command (`ls -d /lib/modules/*/build`) assumes the build
+container is running a kernel matching the target -- true when building
+natively on a real Pi, false in a generic `debian:trixie` container
+where only the headers package is installed. Pointing `KDIR` straight at
+`/usr/src/linux-headers-<release>` builds fine but breaks
+`build-binary-deb.sh`'s release-name derivation (`dirname`/`basename` of
+`KDIR` assumes the `/lib/modules/<release>/build` symlink shape),
+producing a package misnamed `sinput-modules-src`. Fix: the headers
+package already lays down `/lib/modules/<release>/build ->
+/usr/src/linux-headers-<release>` itself (confirmed: this is not
+something that requires a matching running kernel), so pointing `KDIR`
+at that symlink instead of the raw headers path gets the correct
+`KERNEL_RELEASE` derivation with no script changes needed.
+
+Also hit the exact disk-hygiene failure mode already documented
+separately: the podman machine's AppleHV virtual disk had grown to 63GB
+(host had only 3.2GB free), even though `podman system df` only showed
+~4.5GB of tracked images/containers -- the mismatch is sparse-file
+growth inside the VM's disk image that a host-side `podman system prune`
+cannot reclaim on its own. `podman machine ssh -- sudo fstrim -av`
+(trimming the VM guest's own root filesystem) reclaimed 52GB back to the
+host immediately, shrinking the raw disk file from 63GB to 11GB. Worth
+running before any HIL build session if host disk pressure comes up
+again, ahead of anything more drastic.
+
+Built via a persistent named container (`sinput-hil-build`, matching the
+already-documented disk-hygiene default) rather than a disposable one,
+pinned to the exact `linux-headers-6.18.50+rpt-rpi-v8` package via the
+Raspberry Pi trixie repo/keyring workaround `docs/rpi-hil.md` already
+documents; `modinfo` confirmed vermagic (`6.18.50+rpt-rpi-v8 SMP preempt
+mod_unload modversions aarch64`) and version (0.2.2) before shipping.
+`dpkg -i` upgraded the rig cleanly from the previously-installed 0.2.1.
+
+Result, across 3 fresh forced BLE disconnect/reconnect cycles (plus the
+initial module reload) -- 4/4 got a real FEATURES response, all fast
+(within the same second), none fell back:
+
+* `dmesg`: `SInput protocol v1, poll rate 5000 us, sticks=1/1
+  triggers=1/1 accel=1 (+/-8g) gyro=1 (+/-2000 dps) buttons=0xffffffff`
+  every time, never the "assuming full capability set" fallback line.
+* `/proc/bus/input/devices` for the registered "SInput IMU" device:
+  `PROP=40` -- bit 6 set, i.e. `INPUT_PROP_ACCELEROMETER`, confirmed via
+  `python3-evdev`'s `input_props()` returning `[6]` directly (the kernel
+  enum value, not just the raw hex guessed at).
+* Per-axis resolution read back via `python3-evdev`'s `capabilities(absinfo=True)`:
+  `ABS_X/Y/Z res=4096` (exactly `32768/8` for `+/-8g`), `ABS_RX/RY/RZ
+  res=16` (exactly `32768/2000`, truncated, for `+/-2000dps`) -- both
+  values match the formula in `sinput_input.c` exactly, computed
+  independently from the logged range values rather than assumed.
+* `dmesg` clean across all cycles: no warnings, oopses, or lockdep
+  splats.
+
+Net result: IMU live registration is now HIL-verified to the same bar as
+button/axis/LED/rumble/power-supply -- this closes the last open item
+from the 2026-09-24 entry. Remaining open items from the test plan are
+unchanged: individual D-pad/bumper/stick-click/trigger-button
+press/release checks, touchpad, USB transport, suspend/resume, `FF_GAIN`
+and effect-duration/envelope fields.
+
+### 2026-09-25: touchpad support added and HIL-verified, first pass
+
+Added `sinput_touchpad.c`: touchpad input device(s), capability-gated on
+`caps.touchpad`/`caps.touchpad_count`/`caps.touchpad_finger_count` (the
+latter two were existing FEATURES-response fields --
+`SI_FEAT_TOUCHPAD_COUNT`/`FINGERS` -- already read into the capability
+struct but never consulted by anything, same "known but unwired" state
+`player_leds`/`rgb_led`/`rumble` were each in before). Design follows
+`hid-playstation.c`'s `ps_touchpad_create()` pattern already used as this
+project's reference: a separate `input_dev` per touchpad
+(`INPUT_PROP_POINTER`/`INPUT_PROP_BUTTONPAD`, `BTN_LEFT` for the click,
+`ABS_MT_POSITION_X/Y` via `input_mt_init_slots()`), plus
+`ABS_MT_PRESSURE` (SInput's touch data carries a real analog pressure
+value, unlike DualShock/DualSense's digital-only touch presence).
+
+Two new wire offsets/bit indices needed adding, both cross-checked
+against three independent sources before trusting them, given this
+project's history of SDL's own `#define` names not matching real
+hardware (the face-button bug, 2026-09-22): `SDL_hidapi_sinput.c`'s
+`SINPUT_REPORT_IDX_TOUCH1_X` et al. and `SINPUT_BUTTONMASK_TOUCHPAD1/2`,
+and `leenx-foss/Bluepad32/hil`'s `ref-ble-gamepad/BleSInput.h`'s
+`SINPUT_IN_IDX_TOUCH1_X` et al. and `SINPUT_BTN2_TOUCHPAD1/2` (numbered
+from the byte after the report ID -- normalizing for that convention
+difference, e.g. its `SINPUT_IN_IDX_PLUG_STATUS=0` vs this driver's
+`SI_PLUG_STATUS=1`, every value lines up exactly). Unlike the face
+buttons, all three sources agree here: touch1/touch2 X/Y/pressure at
+wire offsets 35-46, touchpad click buttons at bit indices 22/23.
+Touchpad click deliberately isn't added to `sinput_input.c`'s
+`sinput_buttons[]` table -- like `hid-playstation.c`'s touchpad button,
+it belongs to the touchpad's own `input_dev`, not the main gamepad's.
+
+`sinput_probe()`'s "assume everything present" fallback block was
+missing `caps.touchpad`/`touchpad_count`/`touchpad_finger_count` at
+first -- caught before it ever shipped, not after, this time (unlike
+`player_leds`/`rgb_led` on 2026-09-22 and `rumble` on 2026-09-23, both
+caught only by a real HIL run). Set to one touchpad, two fingers, which
+is also what this HIL rig's own emulator actually negotiates for real
+(see below) -- not an arbitrary guess.
+
+HIL-verified on `rp4b-ble-hil` against the same ESP32-BLE-Gamepad
+emulator, built/deployed via the same podman/RPi-headers `.deb` pipeline
+as every other entry above. First confirmed the emulator could even
+simulate this at all: `leenx-foss/Bluepad32/hil`'s actual rig firmware
+(`emulator/src/main.cpp`, distinct from a same-named-but-unrelated
+generic-gamepad HIL harness project this session initially mistook it
+for) auto-enables SInput touchpad mode with 1 pad/2 fingers, and exposes
+a `touch <0|1> <x> <y> <pressure>` command over its NuS bridge.
+
+Driving that NuS bridge this time didn't use whatever ad hoc tool
+earlier sessions used (never documented) -- used `busctl call ...
+org.bluez.GattCharacteristic1 WriteValue` directly against the
+already-connected device's GATT object path instead, found via `busctl
+tree org.bluez` + matching each `char*`'s `UUID` property against the
+known NUS RX UUID. One real gotcha: this only works as the normal
+`bot-ansible-leet` user -- the identical call under `sudo` fails with
+"Not paired" even though `bluetoothctl info` confirms the device is
+paired/bonded/connected, because `sudo`'s root session talks to a
+different D-Bus context than the one BlueZ's policy actually authorizes
+for this user. `busctl monitor` (for watching notifications live) also
+needs privilege this session's `sudo` context didn't have either
+(`BecomeMonitor: Access denied`) -- worked around by reading the
+characteristic's `Value` property after a `StartNotify`, which BlueZ
+keeps updated to the latest notified value.
+
+Confirmed real, once the actual wire/evdev methodology was sound (see
+below for the false alarm along the way): dmesg showed
+`touchpad=1 (pads=1 fingers=2)` in the FEATURES log line, matching the
+emulator's real config exactly; a `python3-evdev` live-event capture
+(`InputDevice.read_loop()`, not `absinfo()` -- see below) on sending
+`touch 0 -16000 16000 32767` showed `ABS_MT_POSITION_X`/`Y`/`PRESSURE`
+events with exactly those values, plus the kernel's own MT-compat layer
+correctly deriving legacy single-touch `ABS_X`/`ABS_Y`; sending
+`touch 1 5000 -6000 7000` while slot 0 was still active moved
+`ABS_MT_SLOT` to 1, assigned a new `ABS_MT_TRACKING_ID`, and the kernel's
+MT core correctly flipped `BTN_TOOL_FINGER` off / `BTN_TOOL_DOUBLETAP` on
+now that two contacts were live -- a strong correctness signal, since
+that transition is entirely the kernel's own MT-core logic reacting
+correctly to this driver's two `input_mt_slot()`/
+`input_mt_report_slot_state()` calls, not something hand-computed here;
+`press 16` (the emulator's `BUTTON_16`, wired to `SINPUT_BTN2_TOUCHPAD1`
+in `BleGamepad.cpp`) produced `BTN_LEFT` down on the touchpad's own
+`input_dev`, confirming the click-bit-to-`BTN_LEFT` wiring. `dmesg`
+stayed clean throughout.
+
+**A real methodology trap along the way, worth recording**: the first
+attempt to verify this looked like a driver bug -- `touch` commands
+appeared to have no effect at all, with `ABS_MT_POSITION_X`/`Y` reading
+back as `0` via `python3-evdev`'s `InputDevice.absinfo()` (an `EVIOCGABS`
+ioctl) after sending a touch command, repeatably, across several
+attempts. Chased this down through several dead ends before finding the
+real cause: (1) confirmed the NuS write pipeline itself worked (a `press`
+command changed evdev button state correctly), which narrowed it to
+"touch specifically, or how it's being read"; (2) confirmed via raw
+`/dev/hidraw0` reads that the correct bytes (`-16000`/`16000`/`32767`,
+byte-exact) genuinely were on the wire -- ruling out both the emulator
+and this driver's raw_event dispatch; (3) only then found that
+`EVIOCGABS`/`absinfo()` on an `ABS_MT_*` code apparently doesn't reflect
+what a live event stream shows for this kernel/MT setup, while
+`InputDevice.read_loop()` reading actual events immediately showed the
+right values arriving. Also hit the same buffered-stdout trap
+`docs/research.md`'s `bluetoothd -d` and `btmon` entries already
+documented for other tools -- `cat /dev/hidraw0 | hexdump -C` piped
+through `timeout` produced nothing because `hexdump`'s stdout was
+block-buffered and never flushed before being killed; switching to
+Python with `buffering=0`/explicit `flush()` fixed it immediately. No
+driver code changed as a result of any of this -- the implementation was
+correct throughout; every dead end was in the verification tooling, not
+the thing being verified.
+
+Not yet exercised: the two-independent-touchpads shape
+(`touchpad_count > 1`) -- this rig's emulator is hardcoded to 1 pad/2
+fingers by its own firmware config, so that branch of
+`sinput_touchpad_init()`/`sinput_touchpad_report()` is only exercised by
+`make check`'s decode test, not real hardware, until a device or
+emulator config that actually negotiates `touchpad_count=2` is
+available.

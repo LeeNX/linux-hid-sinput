@@ -24,6 +24,13 @@
 #define SINPUT_NUM_PLAYER_LEDS 4
 
 /*
+ * SDL_hidapi_sinput.c's SINPUT_MAX_ALLOWED_TOUCHPADS: the wire only ever
+ * carries two touch slots (SI_TOUCH1_x and SI_TOUCH2_x in
+ * sinput_protocol.h), so two is a hard ceiling, not a policy choice.
+ */
+#define SINPUT_MAX_TOUCHPADS 2
+
+/*
  * Capabilities decoded from the SInput feature response. Every field
  * defaults to "supported" so that a device which never answers the
  * features request (such as the generic bring-up test ID) keeps today's
@@ -64,7 +71,22 @@ struct sinput_caps {
 	bool right_stick;
 	bool left_trigger;
 	bool right_trigger;
+	/*
+	 * touchpad is the SI_FLAG1_TOUCHPAD capability bit; touchpad_count/
+	 * touchpad_finger_count come from SI_FEAT_TOUCHPAD_COUNT/FINGERS and
+	 * decide the *shape* of what gets registered (sinput_touchpad_init()
+	 * in sinput_touchpad.c): touchpad_count>1 means N independent
+	 * single-finger touchpads (one input_dev each), touchpad_count==1
+	 * means one touchpad with touchpad_finger_count fingers (one input_dev,
+	 * multiple MT slots) -- mirrors SDL_hidapi_sinput.c's own
+	 * HIDAPI_DriverSInput_UpdateDevice() clamp/branch on these same two
+	 * values. Zero touchpad_count with touchpad true would mean "capable
+	 * but the response didn't say how many" -- sinput_touchpad_init()
+	 * treats that as "none" rather than guessing a shape.
+	 */
 	bool touchpad;
+	u8 touchpad_count;
+	u8 touchpad_finger_count;
 	bool rgb_led;
 	/*
 	 * Bit N set means the SInput usage mask reports button N (see
@@ -79,6 +101,13 @@ struct sinput_device {
 	struct hid_device *hdev;
 	struct input_dev *input;
 	struct input_dev *imu;
+	/*
+	 * touchpad[0] is always the first (or only) touchpad if any is
+	 * registered; touchpad[1] only exists when caps.touchpad_count > 1.
+	 * See sinput_touchpad_report()'s comment in sinput_touchpad.c for how
+	 * the two wire touch slots map onto these.
+	 */
+	struct input_dev *touchpad[SINPUT_MAX_TOUCHPADS];
 	struct sinput_caps caps;
 	struct completion caps_done;
 
@@ -167,6 +196,14 @@ int sinput_send_output_command(struct sinput_device *sdev, u8 cmd,
 int sinput_input_init(struct sinput_device *sdev);
 int sinput_imu_init(struct sinput_device *sdev);
 void sinput_input_report(struct sinput_device *sdev, const u8 *data);
+
+/*
+ * sinput_touchpad.c: touchpad input device(s), capability-gated on
+ * caps.touchpad. Optional like the LEDs/rumble -- a registration failure is
+ * logged and swallowed by the caller, not fatal to probe().
+ */
+int sinput_touchpad_init(struct sinput_device *sdev);
+void sinput_touchpad_report(struct sinput_device *sdev, const u8 *data);
 
 /* sinput_battery.c: power_supply battery device. */
 int sinput_battery_init(struct sinput_device *sdev);
