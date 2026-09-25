@@ -2,4 +2,13 @@
 # though hid-generic binds to them first by default. See README.md "Adding
 # your own VID/PID". The generic SInput testing VID/PID (2E8A:10C6) does not
 # need this -- it is already in the driver's built-in id_table.
-ACTION=="add", SUBSYSTEM=="hid", DRIVER=="hid-generic", RUN+="/usr/lib/sinput/sinput-claim-id.sh"
+#
+# Deliberately does NOT also match DRIVER=="hid-generic": device_add()
+# (drivers/base/core.c) fires the "add" uevent before bus_probe_device()
+# runs, so on a real first plug-in no driver is bound yet at the moment
+# udev evaluates this rule -- DRIVER== would only ever match on a later
+# re-synthesized `udevadm trigger` event for an already-bound device (which
+# the installers also run, for devices connected before install), not on
+# the actual first plug-in this rule exists for. sinput-claim-id.sh
+# determines the device's current driver itself instead.
+ACTION=="add", SUBSYSTEM=="hid", RUN+="/usr/lib/sinput/sinput-claim-id.sh"
