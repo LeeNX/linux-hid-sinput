@@ -84,6 +84,46 @@ layout is reverse-derived from SDL's SInput HIDAPI driver (see
 [`docs/research.md`](docs/research.md)), not from a stable spec, so treat
 the byte offsets as best-effort.
 
+## Adding your own VID/PID
+
+The driver's built-in `id_table` ([`src/sinput_core.c`](src/sinput_core.c))
+only matches the generic SInput testing VID/PID (`2E8A:10C6`). If you're
+building your own SInput-compatible controller, do **not** ship it under
+that VID/PID or under Raspberry Pi Foundation's `2E8A` -- register a real
+product ID instead. If you don't want to go through full USB-IF vendor
+registration, [pid.codes](https://pid.codes/) is a shared VID (`1209`) for
+open-source hardware projects; the SInput spec itself recommends a
+device-specific PID for real products (see [Research snapshot](#research-snapshot)).
+
+There's no need to patch and rebuild the module for this. The Linux HID bus
+already supports adding device IDs to a driver at runtime (`new_id`/`bind`
+under `/sys/bus/hid/drivers/`), which this repo wraps in a udev rule so it
+happens automatically:
+
+* **Persistent (recommended):** add a `vendor:product` line, in hex, to
+  `/etc/sinput/ids.conf` (see the comments in that file for the exact
+  format), then unplug/replug the device (or re-pair it, for Bluetooth).
+  The installed udev rule ([`udev/99-sinput.rules`](udev/99-sinput.rules),
+  via [`scripts/sinput-claim-id.sh`](scripts/sinput-claim-id.sh)) reads that
+  file on every matching HID "add" event and rebinds the device from
+  `hid-generic` to `sinput`. No module rebuild, no reboot.
+  * The two `.deb` packages install this automatically.
+  * For a plain `make`/[`dkms-install.sh`](scripts/dkms-install.sh) install,
+    run [`scripts/install-udev-support.sh`](scripts/install-udev-support.sh)
+    once (as root) to install the rule, helper script, and config file.
+* **One-off/manual test**, without installing anything:
+
+  ```sh
+  echo "0003 2e8a 1a01" | sudo tee /sys/bus/hid/drivers/sinput/new_id
+  # find the device's current hid-generic instance name, e.g. from:
+  ls /sys/bus/hid/drivers/hid-generic/
+  echo -n "0003:2E8A:1A01.000X" | sudo tee /sys/bus/hid/drivers/hid-generic/unbind
+  echo -n "0003:2E8A:1A01.000X" | sudo tee /sys/bus/hid/drivers/sinput/bind
+  ```
+
+  (bus `0003` is USB, `0005` is Bluetooth; find your device's actual
+  vendor/product/instance name under `/sys/bus/hid/drivers/hid-generic/`.)
+
 ## Why a kernel driver?
 
 SDL already supports SInput through HIDAPI, so a kernel driver is not required for
@@ -155,6 +195,10 @@ sudo ./scripts/dkms-remove.sh
   testing in containers to find (Raspberry Pi's kernel-headers packaging
   differs completely between OS releases, and a real apt-trust bootstrap
   failure on the current release).
+
+Both `.deb` flavors also install the runtime VID/PID support (udev rule,
+helper script, `/etc/sinput/ids.conf`) described in
+[Adding your own VID/PID](#adding-your-own-vidpid) — nothing extra to run.
 
 Both scripts are plain POSIX `sh`, no `dh`/`dpkg-buildpackage` involved —
 `dkms mkdeb`/`mkbmdeb`, despite being documented in Debian's own

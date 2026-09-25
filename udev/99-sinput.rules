@@ -1,0 +1,5 @@
+# Claim HID devices whose VID:PID is listed in /etc/sinput/ids.conf, even
+# though hid-generic binds to them first by default. See README.md "Adding
+# your own VID/PID". The generic SInput testing VID/PID (2E8A:10C6) does not
+# need this -- it is already in the driver's built-in id_table.
+ACTION=="add", SUBSYSTEM=="hid", DRIVER=="hid-generic", RUN+="/usr/lib/sinput/sinput-claim-id.sh"

@@ -32,6 +32,15 @@ mkdir -p "$SRCDIR" "$WORKDIR/DEBIAN"
 cp Makefile dkms.conf "$SRCDIR/"
 cp -r src "$SRCDIR/"
 
+# Runtime VID/PID support (see README.md "Adding your own VID/PID"): lets
+# DIY builders claim their own hardware's VID:PID via /etc/sinput/ids.conf
+# instead of patching and rebuilding the module.
+mkdir -p "$WORKDIR/usr/lib/sinput" "$WORKDIR/usr/lib/udev/rules.d" "$WORKDIR/etc/sinput"
+install -m 0755 scripts/sinput-claim-id.sh "$WORKDIR/usr/lib/sinput/sinput-claim-id.sh"
+install -m 0644 udev/99-sinput.rules "$WORKDIR/usr/lib/udev/rules.d/99-sinput.rules"
+install -m 0644 etc/sinput/ids.conf "$WORKDIR/etc/sinput/ids.conf"
+printf '/etc/sinput/ids.conf\n' > "$WORKDIR/DEBIAN/conffiles"
+
 cat > "$WORKDIR/DEBIAN/control" <<CONTROLEOF
 Package: ${PKG}
 Version: ${PACKAGE_VERSION}
@@ -55,6 +64,8 @@ cat > "$WORKDIR/DEBIAN/postinst" <<POSTEOF
 #!/bin/sh
 set -e
 /usr/lib/dkms/common.postinst ${PACKAGE_NAME} ${PACKAGE_VERSION}
+udevadm control --reload || true
+udevadm trigger --subsystem-match=hid --action=add || true
 POSTEOF
 chmod 0755 "$WORKDIR/DEBIAN/postinst"
 
@@ -64,6 +75,13 @@ set -e
 dkms remove -m ${PACKAGE_NAME} -v ${PACKAGE_VERSION} --all || true
 PREEOF
 chmod 0755 "$WORKDIR/DEBIAN/prerm"
+
+cat > "$WORKDIR/DEBIAN/postrm" <<POSTEOF
+#!/bin/sh
+set -e
+udevadm control --reload || true
+POSTEOF
+chmod 0755 "$WORKDIR/DEBIAN/postrm"
 
 mkdir -p "$OUTDIR"
 OUTFILE="${OUTDIR}/${PKG}_${PACKAGE_VERSION}_${ARCH}.deb"
