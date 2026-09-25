@@ -647,3 +647,178 @@ descriptor itself -- HID field-level introspection (usage pages, per-field
 bit offsets) is a further step this entry does not attempt -- but the
 report-level framing everything else in this driver is built on is now
 independently confirmed, not just assumed.
+
+Follow-up from CodeRabbit review on the PR: `report->size / 8` truncates
+instead of rounding up, so a report whose data fields don't land on a
+byte boundary would have silently computed a too-small size and
+potentially logged a false match. Replaced with `hid_report_len()`
+(`include/linux/hid.h`), the kernel's own correct helper
+(`DIV_ROUND_UP(report->size, 8)` plus the report ID byte, gated on
+`report->id > 0` rather than the coarser per-type `renum->numbered` flag)
+-- same result for every SInput report here (all three have nonzero IDs),
+but no reason to hand-roll arithmetic the kernel already provides
+correctly. Re-verified on `rp4b-ble-hil`: all three sizes still matched
+exactly with the corrected calculation.
+
+### 2026-09-24: IMU resolution/INPUT_PROP_ACCELEROMETER -- parsing confirmed, live registration not directly observed
+
+`SI_FEAT_ACCEL_RANGE`/`SI_FEAT_GYRO_RANGE` have existed in
+`sinput_protocol.h` since the FEATURES response layout was first
+reverse-derived from SDL, but nothing ever read them: `sinput_imu_init()`
+registered `ABS_X/Y/Z`/`ABS_RX/RY/RZ` with a fixed `-32768..32767` range
+and no resolution or `INPUT_PROP_ACCELEROMETER`, so userspace had no way
+to convert a raw value into a real physical unit. Checked against the two
+reference drivers this project already follows for design (`hid-
+playstation.c`, `hid-nintendo.c`) before assuming IIO was the right model
+here -- it isn't, for gamepad motion controls specifically:
+`hid-playstation.c`'s `ps_sensors_create()` does exactly the same thing
+this fix now does, `evdev` with `INPUT_PROP_ACCELEROMETER` and
+`input_abs_set_res()`, not IIO.
+
+Added `caps.accel_range`/`caps.gyro_range` (`struct sinput_caps`),
+parsed in `sinput_parse_features()`. `sinput_imu_init()` now sets
+`INPUT_PROP_ACCELEROMETER` and per-axis resolution (`32768 / range`,
+counts-per-g / counts-per-degree-per-second) whenever a real FEATURES
+response supplied a nonzero range, and falls back to today's plain
+unscaled axes (no property, no resolution) when it didn't -- reporting a
+resolution without knowing the true range would be a fabricated number
+dressed up as calibration data. Units and the counts-per-unit formula both
+cross-checked against two independent sources that agree: SDL's own
+`CalculateAccelScale()`/`CalculateGyroScale()` (`accelRange` in +/-g,
+`gyroRange` in +/-degrees/second, raw int16 spanning the full range) and
+the kernel's own `struct input_absinfo` doc comment in
+`include/uapi/linux/input.h` (`INPUT_PROP_ACCELEROMETER` changes
+resolution semantics to exactly those units).
+
+HIL-verified the parsing half only. A forced BLE disconnect/reconnect on
+`rp4b-ble-hil` did get one real FEATURES response through mid-session
+(this rig's emulator usually never answers at all, see the 2026-09-22
+entry above) -- logged `accel=1 (+/-8g) gyro=1 (+/-2000 dps)`, both
+plausible real IMU chip specs, confirming the offsets and the new log
+fields are correct. But it arrived roughly 2 seconds after `probe()`'s
+200ms `wait_for_completion_timeout()` had already given up, so
+`sinput_imu_init()` had already registered the IMU device from the
+fallback path by the time `caps.accel_range`/`gyro_range` actually got
+set -- the existing, already-documented "caps can be mutated by a late
+response after registration already used the old values" design (see
+`struct sinput_caps`'s comment in `sinput.h`), not a new bug. Tried to
+force a same-session repeat with a temporarily-relaxed 3-second timeout
+(local test build, never committed) across both a forced reconnect and
+one organic reconnect; FEATURES still didn't answer either time within
+3 seconds. This looks like a genuine reliability characteristic of this
+specific emulator/rig rather than something a longer client-side timeout
+fixes -- consistent with every earlier HIL entry's "usually never
+answers" characterization. Not chased further given no access to the
+private rig's own tooling for controlling the emulator's FEATURES
+behavior more deliberately.
+
+Net result: the parsing and the scaling arithmetic are both independently
+confirmed correct (one real parse, two independent unit-formula sources
+agreeing), and the code path is implemented following the same pattern as
+every other capability-gated feature in this driver, but a live registered
+IMU `input_dev` actually carrying `PROP=ACCELEROMETER` and a populated
+resolution has not itself been directly observed on real hardware this
+session -- worth another HIL pass with better luck (or a fresh rig
+pairing) before fully closing this out to the same bar as rumble/LEDs.
+
+### 2026-09-24: tried raising the FEATURES timeout to fix the "usually never answers" problem -- didn't work
+
+The "no SInput features response" fallback has come up in nearly every
+HIL entry in this file since 2026-09-22, most recently blocking the IMU
+verification above. Tried an actual fix rather than working around it
+again: raised `probe()`'s `wait_for_completion_timeout()` from 200ms to
+`SINPUT_FEATURES_TIMEOUT_MS` (3000ms, `sinput_core.c`), reasoning from the
+one real response timing directly observed so far (~2.1s after a fresh
+BLE reconnect, previous entry) plus a well-known BLE characteristic: a
+freshly (re)connected link starts on conservative default connection
+parameters, and negotiating faster ones is itself an L2CAP round trip the
+peripheral often defers by roughly a second, so early GATT traffic
+(FEATURES included) is genuinely slower right after connecting than once
+the link has settled.
+
+Measured it properly rather than assuming it worked: 11 more fresh
+disconnect/reconnect cycles on `rp4b-ble-hil` at the new 3000ms timeout
+(5 with explicit `driver attached` confirmation that `probe()` actually
+ran each time, all clean binds) -- zero real FEATURES responses. That's
+no better than the roughly 1-in-4-or-5 hit rate seen earlier this session
+at the old 200ms timeout, and arguably looks worse, though the sample
+sizes are too small either way to call that a real difference.
+
+Conclusion: this rig's unreliable FEATURES response is not primarily a
+client-side timeout problem, or at least not one bounded by a few
+seconds. The BLE connection-parameter-negotiation reasoning above is
+still real and still a legitimate reason to keep a longer timeout than
+200ms regardless, so the change was kept -- but it should not be treated
+as having fixed the underlying reliability issue, and whatever actually
+causes it most likely lives in the emulator/rig itself, which this
+project has no visibility into or control over. Not chased further at
+the time -- see the next entry for where that assumption turned out to
+be wrong.
+
+### 2026-09-24: FEATURES flakiness root-caused precisely (in bluetoothd, not this driver or the rig) -- retry loop kept as a real but partial mitigation
+
+Continuation of the entry above. Got access to `bluetoothd` debug logging
+on `rp4b-ble-hil` (`bluetoothd -d` via a temporary systemd drop-in,
+restored afterward) and captured the exact sequence across several fresh
+BLE reconnects. Two real findings, both confirmed against actual source
+(`bluetoothd`'s HOG/HID-over-GATT profile, `profiles/input/hog-lib.c`,
+matched to the installed BlueZ 5.82 via its public upstream repo), not
+guessed from log lines alone:
+
+1. `bluetoothd` creates the `uhid` device -- which is what makes this
+   driver's `probe()` run at all -- before it has resolved which GATT
+   handle maps to which HID report ID for every Report characteristic. A
+   `msleep()` in `probe()` before the first FEATURES request, long enough
+   to clear that specific window, did not fix the flakiness (confirmed:
+   the write consistently went out *after* that resolution had already
+   completed, per debug logs, and still got no response).
+2. The actual mechanism: a Report characteristic's incoming-notification
+   callback is only registered with `bluetoothd`'s internal ATT dispatcher
+   once its own CCC (notification-enable) read+write+confirm sequence
+   completes for that specific characteristic -- a multi-step async chain
+   run independently per report, interleaved with unrelated GATT discovery
+   for other services on the same connection (device info, battery, a
+   second BLE service). A notification that arrives before that chain
+   finishes for this report is silently dropped by `bluetoothd`'s own ATT
+   dispatch layer -- there is no error path for it, confirmed by an
+   entirely clean debug log across a 5-attempt, 5-second retry window with
+   zero `report_ccc_written_cb()` calls for the relevant characteristic at
+   all. This is why a response could be confirmed present on the wire
+   (real BLE capture, previous entries) and still never reach
+   `raw_event()`, independent of how long or how often this driver was
+   willing to ask.
+
+Replaced the fixed pre-request delay with a retry loop
+(`SINPUT_FEATURES_RETRY_COUNT` x `SINPUT_FEATURES_RETRY_MS`, 5 x 1000ms):
+each resend gives the response a fresh chance to land once `bluetoothd`'s
+internal state has caught up, rather than betting everything on one exact
+delay guess. Measured properly rather than assumed fixed: still did not
+reliably succeed across multiple fresh-reconnect cycles on this rig.
+
+**Ruled out, not just suspected**: tested whether a stale/mismatched BLE
+bond between this Pi and the rig's SInput emulator explained the
+remaining flakiness, since bonded devices are meant to persist CCC
+subscription state across reconnects and a stale mismatch was a plausible
+explanation for `bluetoothd` never running its enable sequence at all.
+Cleared the bond on both sides (this Pi's `bluetoothd`, and the
+emulator's own bond store via its own maintenance tooling) and re-paired
+completely fresh -- confirmed clean via `bluetoothctl` (`Paired: yes,
+Bonded: yes`) before retesting. Still failed across 4 more fresh-reconnect
+cycles at the same rate as before. This rules out bond staleness
+specifically; whatever remains is some other source of variability in
+`bluetoothd`'s internal timing for this connection's GATT service layout
+that a driver-side retry budget within a few seconds doesn't reliably
+outrun.
+
+**Net status**: root cause is understood and documented precisely, at the
+`bluetoothd`/BlueZ level, not in this driver or in the SInput protocol
+implementation on either side of the connection. The retry loop is kept
+as a real, evidence-based improvement over a single fixed wait, but is
+honestly a partial mitigation, not a fix -- this remains an open
+reliability gap for BLE `FEATURES` negotiation on this specific rig
+configuration. A full fix would need either patching `bluetoothd` itself
+(a system package, out of scope for this project) or a fundamentally
+different driver-side strategy (e.g. treating a late/absent FEATURES
+response as recoverable after registration, re-registering input devices
+if capabilities turn out to differ once a response eventually arrives --
+a real architecture change, not attempted here).

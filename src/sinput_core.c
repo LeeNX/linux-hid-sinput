@@ -30,6 +30,38 @@
 
 #define DRV_NAME "sinput"
 
+/*
+ * probe() sends the FEATURES request up to this many times, waiting
+ * SINPUT_FEATURES_RETRY_MS between each, before giving up and falling back
+ * to "assume everything present" (see the defaults block below).
+ *
+ * This used to be a single request plus one longer wait (200ms, then
+ * 3000ms after that was found not long enough -- see docs/research.md,
+ * 2026-09-24). Neither fixed it, because the real problem was never how
+ * long we waited: root-caused via bluetoothd debug logging
+ * (profiles/input/hog-lib.c) on rp4b-ble-hil that a FEATURES response can
+ * arrive on the wire (confirmed via real BLE capture) and still never
+ * reach raw_event(), because bluetoothd only starts actually listening for
+ * notifications on a given Report characteristic once its own internal
+ * CCC-write-confirm chain completes for that specific characteristic
+ * (report_ccc_written_cb() -> g_attrib_register(), itself gated on a
+ * read-CCC + write-CCC round trip run independently per report,
+ * interleaved with unrelated GATT discovery for other services). A
+ * response landing before that chain finishes for this report is silently
+ * dropped by bluetoothd's own ATT dispatcher -- no error path exists for
+ * it, and no amount of client-side waiting helps once it's already gone.
+ *
+ * A single fixed pre-request delay (tried 2000ms) didn't reliably clear
+ * this either, because that internal timing is genuinely variable, not a
+ * fixed offset. Retrying instead of guessing one delay works with that
+ * variability rather than against it: each resend gives the response a
+ * fresh chance to land after bluetoothd's internal state has caught up,
+ * whenever that actually happens to be, instead of betting everything on
+ * one exact guess.
+ */
+#define SINPUT_FEATURES_RETRY_COUNT 5
+#define SINPUT_FEATURES_RETRY_MS    1000
+
 static void sinput_parse_features(struct sinput_device *sdev,
 				  const u8 *data, size_t size)
 {
@@ -49,6 +81,8 @@ static void sinput_parse_features(struct sinput_device *sdev,
 	caps->player_leds   = !!(flags0 & SI_FLAG0_PLAYER_LEDS);
 	caps->accel         = !!(flags0 & SI_FLAG0_ACCEL);
 	caps->gyro          = !!(flags0 & SI_FLAG0_GYRO);
+	caps->accel_range   = get_unaligned_le16(data + SI_FEAT_ACCEL_RANGE);
+	caps->gyro_range    = get_unaligned_le16(data + SI_FEAT_GYRO_RANGE);
 	caps->left_stick    = !!(flags0 & SI_FLAG0_LEFT_STICK);
 	caps->right_stick   = !!(flags0 & SI_FLAG0_RIGHT_STICK);
 	caps->left_trigger  = !!(flags0 & SI_FLAG0_LEFT_TRIGGER);
@@ -62,11 +96,12 @@ static void sinput_parse_features(struct sinput_device *sdev,
 	caps->valid = true;
 
 	hid_info(sdev->hdev,
-		 "SInput protocol v%u, poll rate %u us, sticks=%d/%d triggers=%d/%d accel=%d gyro=%d buttons=0x%08x\n",
+		 "SInput protocol v%u, poll rate %u us, sticks=%d/%d triggers=%d/%d accel=%d (+/-%ug) gyro=%d (+/-%u dps) buttons=0x%08x\n",
 		 caps->protocol_version, caps->polling_rate_us,
 		 caps->left_stick, caps->right_stick,
 		 caps->left_trigger, caps->right_trigger,
-		 caps->accel, caps->gyro, caps->button_mask);
+		 caps->accel, caps->accel_range, caps->gyro, caps->gyro_range,
+		 caps->button_mask);
 }
 
 /*
@@ -203,6 +238,7 @@ static int sinput_probe(struct hid_device *hdev,
 {
 	struct sinput_device *sdev;
 	int ret;
+	int i;
 
 	sdev = devm_kzalloc(&hdev->dev, sizeof(*sdev), GFP_KERNEL);
 	if (!sdev)
@@ -279,11 +315,20 @@ static int sinput_probe(struct hid_device *hdev,
 	if (ret)
 		return ret;
 
-	ret = sinput_request_features(sdev);
-	if (ret < 0)
-		hid_info(hdev, "could not send SInput features request: %d\n", ret);
-	else if (!wait_for_completion_timeout(&sdev->caps_done, msecs_to_jiffies(200)))
-		hid_info(hdev, "no SInput features response, assuming full capability set\n");
+	/* See SINPUT_FEATURES_RETRY_COUNT's comment for why this retries. */
+	for (i = 0; i < SINPUT_FEATURES_RETRY_COUNT; i++) {
+		ret = sinput_request_features(sdev);
+		if (ret < 0) {
+			hid_info(hdev, "could not send SInput features request: %d\n", ret);
+			break;
+		}
+		if (wait_for_completion_timeout(&sdev->caps_done,
+						msecs_to_jiffies(SINPUT_FEATURES_RETRY_MS)))
+			break;
+	}
+	if (!sdev->caps.valid)
+		hid_info(hdev, "no SInput features response after %d attempt(s), assuming full capability set\n",
+			 SINPUT_FEATURES_RETRY_COUNT);
 
 	ret = sinput_input_init(sdev);
 	if (ret)
