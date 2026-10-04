@@ -1202,3 +1202,55 @@ completely clean -- no warnings, no lockdep complaints, no hangs. The
 actual shape-*change* code path itself remains verified by inspection
 and the locking argument above, not by observing it happen on real
 hardware.
+
+### 2026-10-04: second rig (RPi 3B+), live module load/unload, and two gaps
+
+First run on the ESP32-BLE-Gamepad HIL rig's tester rather than `rp4b-ble-hil`:
+`rp3b-ble-hil` (Raspberry Pi 3B+, Debian trixie, kernel `6.18.50+rpt-rpi-v8`,
+BlueZ 5.82), driver 0.3.0 as a binary `.deb` cross-built in podman against
+that exact kernel's headers (vermagic matched). The device was not the
+Bluepad32 rig's emulator but the HIL rig's own `hil_runner` firmware with
+its new `sinput` profile (`LeeNX/ESP32-BLE-Gamepad-HIL` branch
+`sinput-profile`; ESP32-C3, ESP32-BLE-Gamepad upstream `65d5178`), driven
+over a wired serial port instead of NuS. Test:
+`tester/sinput_hil.py` in that repo. The module is managed through a
+root-owned `hil-sinput-driver` wrapper (`tester/bootstrap-sinput.sh`) so the
+unprivileged CI user can load/unload it.
+
+New: **the driver was switched in and out under a live BLE connection.**
+`modprobe sinput` took the already-connected device over from `hid-generic`
+(the HID core re-probes on driver registration), and `modprobe -r sinput`
+followed by a write to `/sys/bus/hid/drivers_probe` handed it back -- no
+reconnect, link up throughout. Five unload/load cycles, input checked in
+each state (raw report under `hid-generic`, `BTN_SOUTH` under `sinput`),
+`dmesg` clean (no warnings, oopses or leaks). Every one of the six probes in
+the run got a FEATURES response (protocol v1, 5000 us, +/-8 g, +/-2000 dps,
+1 pad / 2 fingers), unlike the reconnect-driven probes in the 2026-09-24/25
+entries; a probe on an already-established connection may simply be the
+easy case.
+
+Also verified on real hardware for the first time (closing most of the
+2026-09-22 "not yet exercised" list): every mapped button individually,
+including D-pad, bumpers, stick clicks, digital triggers and
+start/back/guide/capture (18 codes); all six stick/trigger axes; IMU values
+on all six axes plus `INPUT_PROP_ACCELEROMETER` and resolution 4096/g and
+16/dps; touchpad slot 0 position and pressure; `power_supply` capacity; and
+`FF_RUMBLE` play/stop arriving at the device as haptic type 2 left=200
+right=40 / 0 0. The raw path also confirmed the device side byte for byte
+(state report offsets, features response, haptic/RGB/player-LED commands).
+
+Gaps found (reported by the test, not failures):
+
+1. **The `SInput IMU` input device has no vendor/product** (`0000:0000`):
+   `sinput_imu_init()` sets only `id.bustype`, while the gamepad and
+   touchpad devices carry `2E8A:10C6`. `hid-playstation.c`'s
+   `ps_allocate_input_dev()` copies vendor/product/version onto its sensors
+   device too; userspace uses those ids (with `phys`/`uniq`) to associate a
+   motion-sensor device with its gamepad.
+2. **SInput buttons with no evdev code:** paddles (bits 14, 15, 20, 21),
+   touchpad clicks (22, 23), power (24) and misc (25-31). SDL maps the
+   paddles and touchpad clicks; candidates on Linux are `BTN_GRIPL`/`GRIPR`
+   style codes or `BTN_TRIGGER_HAPPY*`.
+
+Not covered yet: LED class devices (their `brightness` files are root-only,
+and the wrapper doesn't expose them), USB transport, suspend/resume.

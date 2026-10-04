@@ -202,7 +202,15 @@ int sinput_imu_init(struct sinput_device *sdev)
 
 	imu->name = "SInput IMU";
 	imu->phys = sdev->hdev->phys;
+	/*
+	 * Same ids as the gamepad and touchpad devices, like hid-playstation's
+	 * sensors device: userspace pairs a motion-sensor input device with its
+	 * gamepad by these (plus phys/uniq).
+	 */
 	imu->id.bustype = sdev->hdev->bus;
+	imu->id.vendor = sdev->hdev->vendor;
+	imu->id.product = sdev->hdev->product;
+	imu->id.version = sdev->hdev->version;
 
 	__set_bit(EV_ABS, imu->evbit);
 
