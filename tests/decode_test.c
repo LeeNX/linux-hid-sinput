@@ -291,10 +291,41 @@ static void test_haptic_command(void)
 	      "haptic payload overruns report");
 }
 
+static void test_button_indices(void)
+{
+	/*
+	 * Every SInput button bit this driver names must be unique and fit the
+	 * 32-bit button word -- sinput_input.c's table and the touchpad click
+	 * routing both index by these.
+	 */
+	static const unsigned int idx[] = {
+		SINPUT_BTN_IDX_SOUTH, SINPUT_BTN_IDX_EAST, SINPUT_BTN_IDX_WEST, SINPUT_BTN_IDX_NORTH,
+		SINPUT_BTN_IDX_DPAD_UP, SINPUT_BTN_IDX_DPAD_DOWN, SINPUT_BTN_IDX_DPAD_LEFT,
+		SINPUT_BTN_IDX_DPAD_RIGHT, SINPUT_BTN_IDX_LEFT_STICK, SINPUT_BTN_IDX_RIGHT_STICK,
+		SINPUT_BTN_IDX_LEFT_BUMPER, SINPUT_BTN_IDX_RIGHT_BUMPER, SINPUT_BTN_IDX_LEFT_TRIGGER,
+		SINPUT_BTN_IDX_RIGHT_TRIGGER, SINPUT_BTN_IDX_LEFT_PADDLE1, SINPUT_BTN_IDX_RIGHT_PADDLE1,
+		SINPUT_BTN_IDX_START, SINPUT_BTN_IDX_BACK, SINPUT_BTN_IDX_GUIDE, SINPUT_BTN_IDX_CAPTURE,
+		SINPUT_BTN_IDX_LEFT_PADDLE2, SINPUT_BTN_IDX_RIGHT_PADDLE2, SINPUT_BTN_IDX_TOUCHPAD1,
+		SINPUT_BTN_IDX_TOUCHPAD2, SINPUT_BTN_IDX_POWER, SINPUT_BTN_IDX_MISC4, SINPUT_BTN_IDX_MISC5,
+		SINPUT_BTN_IDX_MISC6, SINPUT_BTN_IDX_MISC7, SINPUT_BTN_IDX_MISC8, SINPUT_BTN_IDX_MISC9,
+		SINPUT_BTN_IDX_MISC10,
+	};
+	uint32_t seen = 0;
+	unsigned int i;
+
+	for (i = 0; i < sizeof(idx) / sizeof(idx[0]); i++) {
+		CHECK(idx[i] < 32, "button bit index overruns the 32-bit button word");
+		CHECK(!(seen & (1u << (idx[i] & 31))), "button bit index used twice");
+		seen |= 1u << (idx[i] & 31);
+	}
+	CHECK(seen == 0xFFFFFFFFu, "not every SInput button bit has a name");
+}
+
 int main(void)
 {
 	test_state_report();
 	test_touchpad_report();
+	test_button_indices();
 	test_features_response();
 	test_usage_mask();
 	test_output_report_layout();

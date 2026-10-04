@@ -17,6 +17,24 @@
 #include "sinput.h"
 #include "sinput_protocol.h"
 
+/*
+ * Back paddles: BTN_GRIPL/GRIPR/GRIPL2/GRIPR2, the codes hid-steam uses for
+ * the Steam Deck's back levers. They only exist in newer kernels' uapi
+ * headers; on older ones fall back to the first BTN_TRIGGER_HAPPY codes
+ * after the ones power/misc use below, so the two never collide.
+ */
+#ifdef BTN_GRIPL
+#define SINPUT_KEY_PADDLE_L1 BTN_GRIPL
+#define SINPUT_KEY_PADDLE_R1 BTN_GRIPR
+#define SINPUT_KEY_PADDLE_L2 BTN_GRIPL2
+#define SINPUT_KEY_PADDLE_R2 BTN_GRIPR2
+#else
+#define SINPUT_KEY_PADDLE_L1 BTN_TRIGGER_HAPPY9
+#define SINPUT_KEY_PADDLE_R1 BTN_TRIGGER_HAPPY10
+#define SINPUT_KEY_PADDLE_L2 BTN_TRIGGER_HAPPY11
+#define SINPUT_KEY_PADDLE_R2 BTN_TRIGGER_HAPPY12
+#endif
+
 /* Single source of truth for which SInput button bit maps to which Linux key. */
 struct sinput_button_map {
 	u8 idx;
@@ -42,6 +60,23 @@ static const struct sinput_button_map sinput_buttons[] = {
 	{ SINPUT_BTN_IDX_BACK,          BTN_SELECT },
 	{ SINPUT_BTN_IDX_GUIDE,         BTN_MODE },
 	{ SINPUT_BTN_IDX_CAPTURE,       BTN_MISC },
+	{ SINPUT_BTN_IDX_LEFT_PADDLE1,  SINPUT_KEY_PADDLE_L1 },
+	{ SINPUT_BTN_IDX_RIGHT_PADDLE1, SINPUT_KEY_PADDLE_R1 },
+	{ SINPUT_BTN_IDX_LEFT_PADDLE2,  SINPUT_KEY_PADDLE_L2 },
+	{ SINPUT_BTN_IDX_RIGHT_PADDLE2, SINPUT_KEY_PADDLE_R2 },
+	/*
+	 * Power and misc: generic BTN_TRIGGER_HAPPY codes, deliberately not
+	 * KEY_POWER -- systemd-logind acts on power keys from input devices,
+	 * and a gamepad button must not be able to shut the host down.
+	 */
+	{ SINPUT_BTN_IDX_POWER,         BTN_TRIGGER_HAPPY1 },
+	{ SINPUT_BTN_IDX_MISC4,         BTN_TRIGGER_HAPPY2 },
+	{ SINPUT_BTN_IDX_MISC5,         BTN_TRIGGER_HAPPY3 },
+	{ SINPUT_BTN_IDX_MISC6,         BTN_TRIGGER_HAPPY4 },
+	{ SINPUT_BTN_IDX_MISC7,         BTN_TRIGGER_HAPPY5 },
+	{ SINPUT_BTN_IDX_MISC8,         BTN_TRIGGER_HAPPY6 },
+	{ SINPUT_BTN_IDX_MISC9,         BTN_TRIGGER_HAPPY7 },
+	{ SINPUT_BTN_IDX_MISC10,        BTN_TRIGGER_HAPPY8 },
 };
 
 static s16 si_s16(const u8 *d, unsigned int off)
