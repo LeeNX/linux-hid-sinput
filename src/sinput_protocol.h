@@ -204,6 +204,26 @@
 #define SINPUT_BTN_IDX_GUIDE         18
 #define SINPUT_BTN_IDX_CAPTURE       19
 /*
+ * Back paddles, power and the spare "misc" buttons. Names and bit numbers
+ * follow SDL_hidapi_sinput.c's SINPUT_BUTTON_IDX_* (LEFT/RIGHT_PADDLE1 14/15,
+ * LEFT/RIGHT_PADDLE2 20/21, POWER 24, MISC4..MISC10 25..31), which agree with
+ * ref-ble-gamepad's BleGamepad.cpp packing (buttons 11/12 -> bits 14/15,
+ * 14/15 -> 20/21, 18 -> 24, 19..25 -> 25..31) -- HIL-verified on the raw
+ * report (2026-10-04, rp3b-ble-hil, see docs/research.md).
+ */
+#define SINPUT_BTN_IDX_LEFT_PADDLE1  14
+#define SINPUT_BTN_IDX_RIGHT_PADDLE1 15
+#define SINPUT_BTN_IDX_LEFT_PADDLE2  20
+#define SINPUT_BTN_IDX_RIGHT_PADDLE2 21
+#define SINPUT_BTN_IDX_POWER         24
+#define SINPUT_BTN_IDX_MISC4         25
+#define SINPUT_BTN_IDX_MISC5         26
+#define SINPUT_BTN_IDX_MISC6         27
+#define SINPUT_BTN_IDX_MISC7         28
+#define SINPUT_BTN_IDX_MISC8         29
+#define SINPUT_BTN_IDX_MISC9         30
+#define SINPUT_BTN_IDX_MISC10        31
+/*
  * Touchpad click (the digital "press down on the pad" button, separate from
  * finger presence/position above), one bit per possible touchpad. Unlike
  * the face-button case, this bit numbering agrees across every source
