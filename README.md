@@ -12,16 +12,18 @@ not expose cleanly.
 Legend's [SInput-HID](https://github.com/HandHeldLegend/SInput-HID) reference
 repository, cross-checked against SDL's SInput HIDAPI implementation (the same
 code shipped in the [SDL 3.4.x release series](https://github.com/libsdl-org/SDL/releases/tag/release-3.4.0),
-first publicly available around 3.4.6). Most protocol details are still
-best-effort until further validated, but the module has now been run once
-against a real ESP32-BLE-Gamepad SInput device over BLE, which caught (and
-fixed) a real transport gap and a real button-mapping bug — see
-[`docs/research.md`](docs/research.md#2026-09-22-first-real-hardware-ble-hil-run-and-a-real-bug-it-caught).
-The planned test target is a DIY SInput-compatible controller built
-on [lemmingDev/ESP32-BLE-Gamepad](https://github.com/lemmingDev/ESP32-BLE-Gamepad),
-with hardware-in-the-loop testing tracked in
-[LeeNX/ESP32-BLE-Gamepad-HIL](https://github.com/LeeNX/ESP32-BLE-Gamepad-HIL)
-against a Raspberry Pi 3 — see [`docs/rpi-hil.md`](docs/rpi-hil.md) for the Pi-side story.
+first publicly available around 3.4.6). The feature-response layout is
+still best-effort, but most features have been verified against a real
+SInput device (see [Planned stages](#planned-stages) for what hasn't): an
+ESP32 running
+[lemmingDev/ESP32-BLE-Gamepad](https://github.com/lemmingDev/ESP32-BLE-Gamepad)
+in SInput mode, paired over BLE with Raspberry Pi hardware-in-the-loop (HIL)
+rigs. The HIL setup is tracked in
+[LeeNX/ESP32-BLE-Gamepad-HIL](https://github.com/LeeNX/ESP32-BLE-Gamepad-HIL);
+see [`docs/rpi-hil.md`](docs/rpi-hil.md) for the Pi side and
+[`docs/research.md`](docs/research.md) for each run and what it found.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for what each release added.
 
 ## Research snapshot
 
@@ -31,7 +33,8 @@ As of 2026-09-16:
   HID development specification.
 * The documented generic testing VID/PID is `0x2E8A:0x10C6`; the specification
   recommends registering a device-specific PID for real products.
-* SDL has a native SInput HIDAPI implementation on its main branch.
+* SDL has a native SInput HIDAPI implementation, shipped in the 3.4.x
+  release series.
 * SDL's implementation currently understands a 64-byte input report, 48-byte
   command/output report, report IDs 1/2/3, capability discovery, dynamic button
   mappings, battery/power state, IMU data, haptics and player/RGB LED commands.
@@ -61,9 +64,11 @@ The module:
    present" if the device never answers;
 6. decodes the SInput state report;
 7. exposes only the buttons, D-pad, and sticks/triggers the feature response's
-   usage mask (or the fallback) says exist;
+   usage mask (or the fallback) says exist -- every SInput button bit has an
+   evdev code (see [Button mapping](#button-mapping));
 8. exposes a separate IMU input device, with only the accel/gyro axes the
-   device actually advertises;
+   device actually advertises, scaled to physical units and carrying the
+   same vendor/product IDs as the gamepad so userspace can pair the two;
 9. exposes battery/charge state as a standard Linux `power_supply` battery
    device (always present in every state report, no capability bit);
 10. exposes player LEDs (4 on/off `led_classdev`s) and an RGB indicator
@@ -86,6 +91,29 @@ Kbuild-linked into a single `sinput.ko` -- see `src/Makefile`.
 The feature-response layout is reverse-derived from SDL's SInput HIDAPI
 driver (see [`docs/research.md`](docs/research.md)), not from a stable
 spec, so treat the byte offsets as best-effort.
+
+### Button mapping
+
+Button names and bit numbers follow SDL's `SDL_hidapi_sinput.c`. The table
+is `sinput_buttons[]` in [`src/sinput_input.c`](src/sinput_input.c).
+
+| SInput button | evdev code |
+|---|---|
+| South / East / West / North | `BTN_SOUTH` / `BTN_EAST` / `BTN_WEST` / `BTN_NORTH` |
+| D-pad | `BTN_DPAD_UP` / `DOWN` / `LEFT` / `RIGHT` |
+| Left / right stick click | `BTN_THUMBL` / `BTN_THUMBR` |
+| Left / right bumper | `BTN_TL` / `BTN_TR` |
+| Left / right trigger (digital) | `BTN_TL2` / `BTN_TR2` |
+| Start / Back / Guide | `BTN_START` / `BTN_SELECT` / `BTN_MODE` |
+| Capture | `BTN_MISC` |
+| Left / right paddle 1, left / right paddle 2 | `BTN_GRIPL` / `BTN_GRIPR` / `BTN_GRIPL2` / `BTN_GRIPR2` (`BTN_TRIGGER_HAPPY9`-`12` on kernels whose headers predate them) |
+| Power | `BTN_TRIGGER_HAPPY1` |
+| Misc 4-10 | `BTN_TRIGGER_HAPPY2`-`8` |
+| Touchpad click | `BTN_LEFT`, on the touchpad's own input device |
+
+Power is deliberately not `KEY_POWER`: systemd-logind acts on power keys
+from any input device, and a gamepad button must not be able to shut the
+host down.
 
 ## Adding your own VID/PID
 
@@ -191,6 +219,21 @@ Build locally:
 ```sh
 make
 sudo insmod src/sinput.ko
+```
+
+Inspect:
+
+```sh
+lsmod | grep sinput
+dmesg | tail -n 100
+cat /proc/bus/input/devices
+```
+
+For an attached controller, also inspect:
+
+```sh
+udevadm info /sys/bus/hid/devices/*/hidraw*/device 2>/dev/null
+evtest
 ```
 
 Run the host-side protocol decode checks (no kernel headers required, works
@@ -320,31 +363,17 @@ To reproduce the kernel-build job locally without Docker/Gitea, install
   [`.gitea/workflows/ci.yml`](.gitea/workflows/ci.yml) only (the Results-API backend issue above),
   while leaving [`.github/workflows/ci.yml`](.github/workflows/ci.yml) free to track latest.
 
-Inspect:
-
-```sh
-lsmod | grep sinput
-dmesg | tail -n 100
-cat /proc/bus/input/devices
-```
-
-For an attached controller, also inspect:
-
-```sh
-udevadm info /sys/bus/hid/devices/*/hidraw*/device 2>/dev/null
-evtest
-```
-
 ## Releases
 
 See [`RELEASE.md`](RELEASE.md). Short version: `scripts/release.sh 0.1.0`
-bumps `dkms.conf`, commits, and tags locally; pushing the tag triggers
-`.gitea/workflows/release.yml` and `.github/workflows/release.yml` to build
-both `.deb` flavors. GitHub attaches them to a Release automatically; Gitea
-uploads them as a downloadable artifact for now (a container-network DNS
-issue on that runner blocks it from reaching its own release API — see
-`RELEASE.md`), so creating the actual Gitea Release from the pushed tag is
-currently a manual step.
+bumps `dkms.conf`, commits, and tags locally; pushing the tag triggers the
+release workflows on all three platforms to build both `.deb` flavors.
+GitHub and GitLab attach them to a Release automatically; Gitea uploads them
+as a downloadable artifact for now (a container-network DNS issue on that
+runner blocks it from reaching its own release API — see `RELEASE.md`), so
+creating the actual Gitea Release from the pushed tag is currently a manual
+step. Before tagging, move the `[Unreleased]` entries in
+[`CHANGELOG.md`](CHANGELOG.md) under the new version's heading.
 
 ## Safety during development
 
@@ -369,7 +398,9 @@ feature set as evidence that SInput is ready for upstream Linux.
       [`docs/rpi-hil.md`](docs/rpi-hil.md))
 * [x] capability-driven *button* mapping (registration and reporting both
       gated on the feature response's usage mask, falling back to "assume
-      every mapped button exists" like the other capabilities)
+      every mapped button exists" like the other capabilities), covering
+      every SInput button bit including paddles, power and misc (see
+      [Button mapping](#button-mapping))
 * [x] battery / `power_supply` (HIL-verified against real hardware; see
       [`docs/research.md`](docs/research.md))
 * [x] force feedback / rumble output command (`FF_RUMBLE` via

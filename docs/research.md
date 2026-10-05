@@ -1252,5 +1252,14 @@ Gaps found (reported by the test, not failures):
    paddles and touchpad clicks; candidates on Linux are `BTN_GRIPL`/`GRIPR`
    style codes or `BTN_TRIGGER_HAPPY*`.
 
+**Follow-up (2026-10-05):** gap 1 is fixed in `6d1f02c` (the IMU device now
+copies vendor/product/version from the HID device). Gap 2 is fixed for the
+paddles, power and misc buttons in `7ca8018` (`BTN_GRIPL`/`GRIPR`/`GRIPL2`/
+`GRIPR2` and `BTN_TRIGGER_HAPPY1`-`8`; see the README's "Button mapping"),
+not yet re-checked on hardware. The touchpad clicks were a false positive:
+they were already reported as `BTN_LEFT` on the touchpad's own input device
+(see the 2026-09-25 touchpad entry), and the test only looked at the gamepad
+device.
+
 Not covered yet: LED class devices (their `brightness` files are root-only,
 and the wrapper doesn't expose them), USB transport, suspend/resume.
