@@ -168,7 +168,7 @@ jobs:
         run: |
           dpkg -r sinput-dkms
           ! dkms status | grep -q "^sinput/"
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: sinput-dkms-source-deb
           path: out/*.deb
@@ -214,7 +214,7 @@ jobs:
           echo "Building against: $kdir"
           mkdir -p out
           ./scripts/build-binary-deb.sh "$kdir" out
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: sinput-rpi3-arm64-deb
           path: out/*.deb
