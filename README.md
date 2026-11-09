@@ -260,7 +260,7 @@ Remove ([`scripts/dkms-remove.sh`](scripts/dkms-remove.sh)):
 sudo ./scripts/dkms-remove.sh
 ```
 
-### Packaging: two `.deb` flavors
+### Packaging: `.deb` packages
 
 * **Source DKMS `.deb`** — [`./scripts/build-source-deb.sh`](scripts/build-source-deb.sh) `[output-dir]`. Ships
   the source under `/usr/src/sinput-<version>/`; its `postinst` hands off to
@@ -277,9 +277,21 @@ sudo ./scripts/dkms-remove.sh
   differs completely between OS releases, and a real apt-trust bootstrap
   failure on the current release).
 
-Both `.deb` flavors also install the runtime VID/PID support (udev rule,
-helper script, `/etc/sinput/ids.conf`) described in
-[Adding your own VID/PID](#adding-your-own-vidpid) — nothing extra to run.
+* **`sinput-common`** — [`./scripts/build-common-deb.sh`](scripts/build-common-deb.sh) `[output-dir]`.
+  The runtime VID/PID support (udev rule, helper script,
+  `/etc/sinput/ids.conf`) described in
+  [Adding your own VID/PID](#adding-your-own-vidpid). Both flavors above
+  depend on it rather than shipping those files themselves, so precompiled
+  packages for several kernels (e.g. the old and new kernel across a
+  Raspberry Pi kernel upgrade) and the DKMS package can all be installed at
+  once. Install it together with the others:
+  `sudo dpkg -i sinput-common_*.deb sinput-modules-*.deb`.
+
+For Raspberry Pi targets, [`./scripts/build-rpi-debs.sh`](scripts/build-rpi-debs.sh)
+`[KERNEL_RELEASE...]` wraps the binary build: it installs Raspberry Pi's
+exact kernel headers for each release given (default: the archive's current
+kernel) and builds `sinput-common` plus one package per kernel. See
+[`docs/rpi-hil.md`](docs/rpi-hil.md).
 
 Both scripts are plain POSIX `sh`, no `dh`/`dpkg-buildpackage` involved —
 `dkms mkdeb`/`mkbmdeb`, despite being documented in Debian's own
@@ -326,8 +338,13 @@ Every push/PR (and manual trigger) runs:
   the kernel dkms was actually targeting, and the module landing in the
   wrong build-output location) — worth keeping as a regression test rather
   than trimming down to "just build the module" again.
+  It then runs [`scripts/test-deb-coexist.sh`](scripts/test-deb-coexist.sh), which installs
+  module packages for two kernels side by side with `sinput-common` and
+  removes one, so the shared-file conflict fixed in 0.4.1 can't come back.
 * `rpi3-binary-deb` — builds the binary `.deb` for a Raspberry Pi 3 (see
-  [`docs/rpi-hil.md`](docs/rpi-hil.md)) and uploads it as a downloadable CI artifact. Needs an
+  [`docs/rpi-hil.md`](docs/rpi-hil.md)) and uploads it as a downloadable CI artifact. Run by
+  hand, it takes a `kernel_releases` input (GitLab: `KERNEL_RELEASES`
+  variable) to build for specific Raspberry Pi kernels instead of the current one. Needs an
   arm64 runner (`linux-headers-rpi-v8` isn't published for amd64): pinned to
   the `arm64` label on Gitea (already registered on the RPi4/5 runner) and
   `ubuntu-24.04-arm` on GitHub (free hosted arm64 runner for public repos,

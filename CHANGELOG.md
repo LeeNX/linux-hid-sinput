@@ -8,6 +8,33 @@ device over BLE; see [`docs/research.md`](docs/research.md) for each run.
 
 ## [Unreleased]
 
+### Fixed
+
+- Precompiled `sinput-modules-<kernel>` packages for different kernels can
+  now be installed at the same time, e.g. across a Raspberry Pi OS kernel
+  upgrade. Installing a second one used to fail with `trying to overwrite
+  '/etc/sinput/ids.conf'`, because every package (and `sinput-dkms`) shipped
+  its own copy of the udev rule, helper script and `ids.conf`. Those now
+  live in a new `sinput-common` package that the others depend on; it takes
+  the files over from installed 0.4.0-and-earlier packages, keeping local
+  `ids.conf` edits.
+
+### Added
+
+- `scripts/build-rpi-debs.sh` builds Raspberry Pi packages for any kernel
+  release(s) in the Raspberry Pi archive, not just the current one. CI on
+  all three platforms accepts a kernel list when run by hand, and a new
+  GitHub workflow ("Extra kernel .debs") builds packages for new kernels
+  from a release tag and attaches them to that release.
+
+### Testing
+
+- CI installs two kernels' module packages side by side with
+  `sinput-common` and removes one (`scripts/test-deb-coexist.sh`).
+- The CI check that `dpkg -r sinput-dkms` really unregisters the module
+  from dkms could never fail (a `!`-negated command doesn't trip `set -e`);
+  it now does.
+
 ## [0.4.0] - 2026-10-05
 
 ### Added

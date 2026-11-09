@@ -1,0 +1,106 @@
+name: Extra kernel .debs
+
+# Ad-hoc: build sinput-modules-<kernel> .debs for one or more Raspberry Pi
+# kernel releases from an already-released tag, and attach them to that
+# tag's existing GitHub Release. For when Raspberry Pi OS ships a new
+# kernel after a release went out -- the release workflow only builds for
+# the kernel that was current at tag time.
+#
+# Run it from the Actions tab ("Run workflow"). The ref picker there
+# selects which version of *this file* runs; the `tag` input selects
+# what gets built. Pick main for the former unless you're testing a
+# change to this workflow.
+#
+# Tags before v0.4.1 are refused: their module packages each shipped
+# /etc/sinput/ids.conf themselves, so a second kernel's package from the
+# same tag couldn't be installed next to the first anyway.
+#
+# Already-attached assets with the same name are left alone, so re-running
+# for a kernel that's already there, or with a kernel list that overlaps
+# what's attached, is harmless. sinput-common is attached only if the
+# release doesn't have it yet.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and attach to, e.g. v0.4.1
+        required: true
+      kernel_releases:
+        description: >-
+          Raspberry Pi kernel release(s), space-separated (`uname -r` on the
+          Pi, e.g. 6.18.60+rpt-rpi-v8, or just 6.18.60). Empty = the
+          archive's current rpi-v8 kernel.
+        required: false
+        default: ""
+      attach:
+        description: Attach to the release (off = build artifact only)
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    container: debian:trixie
+    steps:
+      - name: Install Node.js and tools
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq curl ca-certificates gnupg jq
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y -qq nodejs git
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Check the tag supports side-by-side kernel packages
+        run: |
+          if [ ! -x scripts/build-rpi-debs.sh ] || [ ! -x scripts/build-common-deb.sh ]; then
+            echo "::error::${{ inputs.tag }} predates sinput-common (v0.4.1); its per-kernel packages can't be installed side by side, so extra kernels can't be added to it"
+            exit 1
+          fi
+      - name: Build binary .debs
+        env:
+          KERNEL_RELEASES: ${{ inputs.kernel_releases }}
+        run: |
+          # Unquoted on purpose: a space-separated list, possibly empty.
+          ./scripts/build-rpi-debs.sh -o out $KERNEL_RELEASES
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: sinput-rpi-arm64-debs-${{ inputs.tag }}
+          path: out/*.deb
+      - name: Attach to the release
+        if: ${{ inputs.attach }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_API: https://api.github.com
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          release=$(curl -fsSL "$GITHUB_API/repos/$REPO/releases/tags/$TAG" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json") || {
+            echo "::error::no GitHub Release for $TAG -- run the Release workflow (push the tag) first"
+            exit 1
+          }
+          # printf, not echo: see the same note in release.yml.
+          upload_url=$(printf '%s' "$release" | jq -r .upload_url | sed 's/{.*}//')
+          existing=$(printf '%s' "$release" | jq -r '.assets[].name')
+
+          for f in out/*.deb; do
+            name=$(basename "$f")
+            # GitHub stores '+' in asset names as '.', e.g.
+            # sinput-modules-6.18.60.rpt-rpi-v8_0.4.1_arm64.deb.
+            stored=$(printf '%s' "$name" | tr '+' '.')
+            if printf '%s\n' "$existing" | grep -qxF "$stored"; then
+              echo "Already attached, skipping: $stored"
+              continue
+            fi
+            curl -fsSL -X POST "${upload_url}?name=${name}" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$f" >/dev/null
+            echo "Attached: $stored"
+          done

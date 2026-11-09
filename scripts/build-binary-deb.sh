@@ -32,21 +32,21 @@ MODDIR="$WORKDIR/lib/modules/${KERNEL_RELEASE}/extra"
 mkdir -p "$MODDIR" "$WORKDIR/DEBIAN"
 cp src/sinput.ko "$MODDIR/sinput.ko"
 
-# Runtime VID/PID support (see README.md "Adding your own VID/PID"): lets
-# DIY builders claim their own hardware's VID:PID via /etc/sinput/ids.conf
-# instead of patching and rebuilding the module.
-mkdir -p "$WORKDIR/usr/lib/sinput" "$WORKDIR/usr/lib/udev/rules.d" "$WORKDIR/etc/sinput"
-install -m 0755 scripts/sinput-claim-id.sh "$WORKDIR/usr/lib/sinput/sinput-claim-id.sh"
-install -m 0644 udev/99-sinput.rules "$WORKDIR/usr/lib/udev/rules.d/99-sinput.rules"
-install -m 0644 etc/sinput/ids.conf "$WORKDIR/etc/sinput/ids.conf"
-printf '/etc/sinput/ids.conf\n' > "$WORKDIR/DEBIAN/conffiles"
-
+# Only the module itself lives in this package. Everything that isn't
+# specific to one kernel (udev rule, claim helper, /etc/sinput/ids.conf)
+# is in sinput-common (scripts/build-common-deb.sh), so packages for
+# several kernel releases can be installed side by side -- e.g. the old
+# and new kernel across a Raspberry Pi kernel upgrade.
+#
+# `>=`, not `=`: a module package for an older kernel built from an older
+# release must keep working next to a newer sinput-common.
 cat > "$WORKDIR/DEBIAN/control" <<CONTROLEOF
 Package: ${PKG}
 Version: ${PACKAGE_VERSION}
 Section: kernel
 Priority: optional
 Architecture: ${ARCH}
+Depends: ${PACKAGE_NAME}-common (>= ${PACKAGE_VERSION})
 Maintainer: LeeNX <clinton.lee.taylor@gmail.com>
 Homepage: https://github.com/LeeNX/linux-hid-sinput
 Description: Precompiled SInput HID kernel module for Linux ${KERNEL_RELEASE}
@@ -60,7 +60,8 @@ cat > "$WORKDIR/DEBIAN/postinst" <<POSTEOF
 #!/bin/sh
 set -e
 depmod -a ${KERNEL_RELEASE}
-udevadm control --reload || true
+# Re-run sinput-common's udev rule for already-connected devices, now that
+# a module exists to bind them to.
 udevadm trigger --subsystem-match=hid --action=add || true
 POSTEOF
 chmod 0755 "$WORKDIR/DEBIAN/postinst"
@@ -68,8 +69,11 @@ chmod 0755 "$WORKDIR/DEBIAN/postinst"
 cat > "$WORKDIR/DEBIAN/postrm" <<POSTEOF
 #!/bin/sh
 set -e
-depmod -a ${KERNEL_RELEASE}
-udevadm control --reload || true
+# The kernel's own modules dir may already be gone if the kernel package
+# was purged first; nothing left to index then.
+if [ -d /lib/modules/${KERNEL_RELEASE} ]; then
+	depmod -a ${KERNEL_RELEASE}
+fi
 POSTEOF
 chmod 0755 "$WORKDIR/DEBIAN/postrm"
 

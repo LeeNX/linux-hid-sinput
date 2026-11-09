@@ -121,15 +121,20 @@ dkms-source-deb:
     - apt-get install -y -qq dkms build-essential bc flex bison libssl-dev libelf-dev
         linux-headers-$(dpkg --print-architecture)
     - mkdir -p out
+    - ./scripts/build-common-deb.sh out
     - ./scripts/build-source-deb.sh out
     - kver=$(ls /lib/modules)
     - ln -sfn "/lib/modules/${kver}" "/lib/modules/$(uname -r)" 2>/dev/null || true
-    - dpkg -i out/*.deb
+    - dpkg -i out/sinput-common_*.deb out/sinput-dkms_*.deb
     - test -e "/lib/modules/${kver}/updates/dkms/sinput.ko"
     - version="$(grep '^PACKAGE_VERSION=' dkms.conf | cut -d'"' -f2)"
     - dkms status | grep -q "sinput/${version}.*installed"
     - dpkg -r sinput-dkms
-    - '! dkms status | grep -q "^sinput/"'
+    - 'if dkms status | grep -q "^sinput/"; then echo "sinput still registered with dkms" >&2; exit 1; fi'
+    - dpkg -P sinput-common
+    # Two sinput-modules-<kernel> packages side by side with
+    # sinput-common, e.g. across a Raspberry Pi kernel upgrade.
+    - ./scripts/test-deb-coexist.sh "$(ls -d /lib/modules/*/build | head -1)"
   artifacts:
     paths:
       - out/*.deb
@@ -157,20 +162,13 @@ rpi3-binary-deb:
   image: debian:trixie
   tags:
     - saas-linux-small-arm64
+  # KERNEL_RELEASES: optional space-separated Raspberry Pi kernel
+  # release(s) (`uname -r` on the Pi, e.g. 6.18.60+rpt-rpi-v8 or just
+  # 6.18.60). Set it as a variable when running a pipeline by hand
+  # (Build > Pipelines > Run pipeline) for an ad-hoc build; empty means
+  # the archive's current rpi-v8 kernel. Same script as the other CIs.
   script:
-    - apt-get update -qq
-    - apt-get install -y -qq curl build-essential bc flex bison libssl-dev libelf-dev
-    - |
-      curl -fsSL \
-        https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb \
-        -o /tmp/keyring.deb
-    - dpkg -i /tmp/keyring.deb
-    - echo 'deb http://archive.raspberrypi.com/debian/ trixie main' > /etc/apt/sources.list.d/raspi.list
-    - apt-get update -qq
-    - apt-get install -y -qq linux-headers-rpi-v8
-    - kdir=$(ls -d /lib/modules/*/build | head -1)
-    - mkdir -p out
-    - ./scripts/build-binary-deb.sh "$kdir" out
+    - ./scripts/build-rpi-debs.sh -o out $KERNEL_RELEASES
   artifacts:
     paths:
       - out/*.deb
