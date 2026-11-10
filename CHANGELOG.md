@@ -8,6 +8,8 @@ device over BLE; see [`docs/research.md`](docs/research.md) for each run.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-10
+
 ### Added
 
 - `scripts/podman-build-ubuntu-debs.sh` builds precompiled packages for an
@@ -174,7 +176,8 @@ First release.
 - CI on Gitea, GitHub and GitLab, and release tooling (`scripts/release.sh`
   plus release workflows that attach both `.deb` files).
 
-[Unreleased]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.2.2...v0.3.0
