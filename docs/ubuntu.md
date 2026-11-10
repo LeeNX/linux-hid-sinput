@@ -99,7 +99,7 @@ vermagic: 7.0.0-43-generic SMP preempt mod_unload modversions
 
 ```sh
 HOST=my-ubuntu-box
-D=$(ssh $HOST mktemp -d) && scp out/$HOST/*.deb "$HOST:$D/" && ssh -t $HOST "sudo apt install -y $D/sinput-common_*_all.deb $D/sinput-modules-\$(uname -r)_*.deb && sudo modprobe sinput; rm -rf $D"
+D=$(ssh $HOST mktemp -d) && scp out/$HOST/*.deb "$HOST:$D/" && ssh -t $HOST "sudo apt install -y $D/sinput-common_*_all.deb $D/sinput-modules-\$(uname -r)_*.deb && sudo modprobe sinput; s=\$?; rm -rf $D; exit \$s"
 ```
 
 What it does:
@@ -114,7 +114,7 @@ What it does:
   `\$(uname -r)` is worked out on the target. If no package matches that
   kernel, the install fails without changing anything.
 * Loads the module, and deletes the directory whether or not the install
-  worked.
+  worked. The command still fails if the install or `modprobe` did.
 
 `ssh -t` is there so `sudo` can ask for a password. apt may print `Download
 is performed unsandboxed as root` because its `_apt` user can't read the
@@ -132,7 +132,7 @@ To install a kernel's package before booting into that kernel (see
 (plus `sinput-common`) and leave out the `modprobe`:
 
 ```sh
-D=$(ssh $HOST mktemp -d) && scp out/$HOST/sinput-common_*_all.deb out/$HOST/sinput-modules-7.0.0-45-generic_*.deb "$HOST:$D/" && ssh -t $HOST "sudo apt install -y $D/*.deb; rm -rf $D"
+D=$(ssh $HOST mktemp -d) && scp out/$HOST/sinput-common_*_all.deb out/$HOST/sinput-modules-7.0.0-45-generic_*.deb "$HOST:$D/" && ssh -t $HOST "sudo apt install -y $D/*.deb; s=\$?; rm -rf $D; exit \$s"
 ```
 
 ## Checking it worked

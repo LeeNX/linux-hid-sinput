@@ -116,6 +116,9 @@ jobs:
         with:
           name: sinput-ubuntu-${{ env.CODENAME }}-${{ inputs.arch }}-debs-${{ env.REF_SLUG }}
           path: src/out/*.deb
+          # No .debs (e.g. a kernel_releases value the builder took as an
+          # option) is a failure, not a warning.
+          if-no-files-found: error
       - name: Attach to the release
         if: ${{ inputs.attach }}
         env:
