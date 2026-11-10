@@ -67,12 +67,26 @@ scripts/podman-build-ubuntu-debs.sh -H build-box -t my-ubuntu-box -o out/my-ubun
 * **Older kernels.** Ubuntu's apt index only lists recent kernels. If the
   headers for a kernel can't be found, the build lists the ones that can.
   For anything older, get the `linux-headers-*` `.deb`s from Launchpad.
-* **arm64 targets.** `-t` picks the target's arch. Building arm64 on an
-  amd64 host runs under emulation, which is slow but works.
+* **Build on a host of the target's arch.** `-t` picks the target's arch
+  (amd64 or arm64), and the container runs that arch. Making sure that
+  works is up to you: use a podman host of the same arch (with `-H`), or
+  the GitHub workflow below, which uses native runners. A cross-arch
+  container only starts if the podman host has user-mode QEMU registered
+  with `binfmt_misc` (e.g. `qemu-user-static`), which podman doesn't set
+  up. Without it the container fails with `exec format error`.
 * **Harmless warnings.** `the compiler differs from the one used to build
   the kernel` is expected. The kernel's compiler is called
   `x86_64-linux-gnu-gcc` and the container's is `gcc`, but they are the
   same version.
+
+### On GitHub
+
+The "Ubuntu kernel .debs" workflow
+([`.github/workflows/ubuntu-kernel-debs.yml`](../.github/workflows/ubuntu-kernel-debs.yml))
+does the same build from the Actions tab. Pick the Ubuntu release from
+the list, and paste in kernel release(s) or leave them empty for the
+release's current kernel. Optionally give a tag to build and attach the
+`.deb`s to its release. The `.deb`s are a workflow artifact.
 
 The build prints the module's vermagic. Its first word must be the
 target's `uname -r`:
@@ -85,19 +99,26 @@ vermagic: 7.0.0-43-generic SMP preempt mod_unload modversions
 
 ```sh
 HOST=my-ubuntu-box
-scp out/$HOST/*.deb $HOST:/tmp/ && ssh -t $HOST 'sudo apt install -y /tmp/sinput-common_*_all.deb /tmp/sinput-modules-$(uname -r)_*.deb && sudo modprobe sinput && rm /tmp/sinput-*.deb'
+D=$(ssh $HOST mktemp -d) && scp out/$HOST/*.deb "$HOST:$D/" && ssh -t $HOST "sudo apt install -y $D/sinput-common_*_all.deb $D/sinput-modules-\$(uname -r)_*.deb && sudo modprobe sinput; rm -rf $D"
 ```
 
 What it does:
 
-* Copies the `.deb`s to the target's `/tmp`.
+* Creates a private directory on the target (`mktemp -d`: mode 0700, so
+  only your user can put files in it) and copies the `.deb`s there.
+  Don't copy them to `/tmp` itself and install with a glob from there:
+  on a shared machine another user could leave a matching `.deb` in
+  `/tmp`, and `sudo apt install` would run its install scripts as root.
 * Installs `sinput-common` and the module package for the kernel the
-  target is *running*. The `$(uname -r)` is inside single quotes, so it
-  is worked out on the target, not locally. If no package matches that
+  target is *running*. `$D` is filled in locally, but the escaped
+  `\$(uname -r)` is worked out on the target. If no package matches that
   kernel, the install fails without changing anything.
-* Loads the module, then deletes the copied files.
+* Loads the module, and deletes the directory whether or not the install
+  worked.
 
-`ssh -t` is there so `sudo` can ask for a password.
+`ssh -t` is there so `sudo` can ask for a password. apt may print `Download
+is performed unsandboxed as root` because its `_apt` user can't read the
+private directory. That's expected and harmless.
 
 Use `apt install`, not `dpkg -i`. apt reads the dependency from the
 module package and installs `sinput-common` (and anything else needed) in
@@ -107,11 +128,11 @@ not configured if its dependencies are missing (`iU` in `dpkg -l`), and
 [Troubleshooting](#troubleshooting)).
 
 To install a kernel's package before booting into that kernel (see
-[Kernel upgrades](#kernel-upgrades)), name the file explicitly instead of
-using `$(uname -r)`, and leave out the `modprobe`:
+[Kernel upgrades](#kernel-upgrades)), copy just that kernel's package
+(plus `sinput-common`) and leave out the `modprobe`:
 
 ```sh
-ssh -t $HOST 'sudo apt install -y /tmp/sinput-common_*_all.deb /tmp/sinput-modules-7.0.0-45-generic_*.deb'
+D=$(ssh $HOST mktemp -d) && scp out/$HOST/sinput-common_*_all.deb out/$HOST/sinput-modules-7.0.0-45-generic_*.deb "$HOST:$D/" && ssh -t $HOST "sudo apt install -y $D/*.deb; rm -rf $D"
 ```
 
 ## Checking it worked
@@ -148,13 +169,11 @@ With Secure Boot off (or on a machine without EFI) the module loads. The
 kernel logs `module verification failed: signature and/or required key
 missing - tainting kernel` once, which is expected.
 
-With Secure Boot on, either:
-
-* use the source DKMS package instead. Ubuntu's `dkms` signs the modules
-  it builds with a local key, which you enroll once with `mokutil
-  --import` and confirm at the next boot, or
-* sign `sinput.ko` with a key already enrolled in MOK, using the kernel's
-  `scripts/sign-file`, before packaging.
+Neither the module nor the `.deb`s are signed, and these scripts don't
+do signing. If you need either, that's up to you. With Secure Boot on,
+the simplest route is the source DKMS package: Ubuntu's `dkms` signs the
+modules it builds on the target with a local key, which you enroll once
+with `mokutil --import` and confirm at the next boot.
 
 ## Kernel upgrades
 
@@ -164,8 +183,8 @@ kernel:
 
 1. Build for it, e.g. `-r noble 6.8.0-91` (`--list` shows when the
    headers are out).
-2. Install its package on the target *before* rebooting (the explicit
-   filename form above).
+2. Copy and install its package on the target *before* rebooting (the
+   second command [above](#installing-on-the-target-one-line)).
 3. Reboot. The module is there for whichever kernel boots.
 4. Remove the old kernel's package once you no longer boot it:
    `sudo apt remove sinput-modules-6.8.0-90-generic`.

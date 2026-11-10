@@ -17,6 +17,9 @@ device over BLE; see [`docs/research.md`](docs/research.md) for each run.
   podman on another machine. `scripts/build-ubuntu-debs.sh` does the build
   inside the container, as `scripts/build-rpi-debs.sh` does for Raspberry
   Pi OS. Verified on Ubuntu 26.04 with kernel `7.0.0-43-generic`.
+- A GitHub "Ubuntu kernel .debs" workflow runs the same build by hand from
+  the Actions tab, for one of the three newest supported Ubuntu releases
+  and any of its kernels, optionally attaching to a release.
 - `docs/ubuntu.md`: building, a one-line install on the target with `apt`,
   Secure Boot, kernel upgrades and removal.
 

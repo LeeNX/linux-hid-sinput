@@ -139,7 +139,9 @@ pm start "$NAME" >/dev/null
 	cd "$ROOTDIR"
 	git ls-files -z --cached --others --exclude-standard |
 		while IFS= read -r -d '' f; do
-			[ -e "$f" ] && printf '%s\0' "$f"
+			# if, not &&: a deleted last entry would otherwise end the
+			# loop with status 1 and, under pipefail, the script.
+			if [ -e "$f" ]; then printf '%s\0' "$f"; fi
 		done |
 		COPYFILE_DISABLE=1 tar -c --no-xattrs --null -T - -f -
 ) | pm exec -i "$NAME" sh -c 'rm -rf /src /out && mkdir /src && tar -x -C /src'
