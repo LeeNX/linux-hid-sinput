@@ -121,7 +121,7 @@ releases at once. Run it as root in an arm64 `debian:trixie` container:
 It writes `sinput-common_<version>_all.deb` plus one
 `sinput-modules-<kernel-release>_<version>_arm64.deb` per kernel, e.g.
 `sinput-modules-6.18.60+rpt-rpi-v8_0.4.1_arm64.deb`. Set `APT_PROXY` (e.g.
-`http://192.168.101.10:3142`) to route apt through a local cache.
+`http://192.0.2.10:3142`) to route apt through a local cache.
 
 Under the hood it calls
 [`scripts/build-binary-deb.sh`](../scripts/build-binary-deb.sh) once per

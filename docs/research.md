@@ -498,7 +498,7 @@ anything else, same minimal-viable scope as SDL's own driver).
 
 **Byte-exact confirmation, and better than planned**: no `fftest`/
 `python3-evdev` were installed on the rig yet; installed both via `apt`
-(sped up with the rig's local apt-cacher-ng proxy, `192.168.101.10:3142`).
+(sped up with a local apt-cacher-ng proxy on the LAN).
 Uploaded and played an `FF_RUMBLE` effect
 (`strong_magnitude=0xc000, weak_magnitude=0x4000`) via `python3-evdev`,
 capturing the live Bluetooth traffic with `btmon` (`stdbuf -oL btmon`,
