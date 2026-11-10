@@ -1,12 +1,17 @@
 # Release process
 
-Releases are git tags, plus two `.deb` files: the source DKMS package
+Releases are git tags, plus `.deb` files: the source DKMS package
 (`sinput-dkms_<version>_all.deb`, from
-[`scripts/build-source-deb.sh`](scripts/build-source-deb.sh)) and the
-precompiled Raspberry Pi 3 binary package
+[`scripts/build-source-deb.sh`](scripts/build-source-deb.sh)), the
+kernel-independent support files both of the others depend on
+(`sinput-common_<version>_all.deb`, from
+[`scripts/build-common-deb.sh`](scripts/build-common-deb.sh)), and one
+precompiled Raspberry Pi binary package per kernel
 (`sinput-modules-<kernel-release>_<version>_arm64.deb`, from
-[`scripts/build-binary-deb.sh`](scripts/build-binary-deb.sh) — see
-[`docs/rpi-hil.md`](docs/rpi-hil.md)). How those two files actually reach a
+[`scripts/build-rpi-debs.sh`](scripts/build-rpi-debs.sh) — see
+[`docs/rpi-hil.md`](docs/rpi-hil.md)). A release starts with one binary
+package, for the kernel that's current when it's tagged; more can be added
+later (see "Extra kernels" below). How those files actually reach a
 release differs by platform (see "What happens after the tag is pushed"
 below) — GitHub and GitLab both automate it fully, while Gitea builds the
 files but stops short of publishing them for a network reason specific to
@@ -101,6 +106,33 @@ the dkms install/remove cycle themselves, they rely on the CI run triggered
 by the same branch push to be the actual correctness gate. If you want to
 be sure CI passed before trusting a release's assets, check the CI run for
 that commit separately.
+
+## Extra kernels on an existing release
+
+When Raspberry Pi OS ships a new kernel after a release, add a
+`sinput-modules-<new-kernel>` package to that release rather than cutting a
+new one. Releases from v0.4.1 on support this; earlier ones can't, because
+their per-kernel packages each shipped `/etc/sinput/ids.conf` and so can't
+be installed next to each other.
+
+* **GitHub**: Actions → "Extra kernel .debs" → Run workflow, with the
+  release tag (e.g. `v0.4.1`) and the kernel release(s) (e.g. `6.18.60`, or
+  `6.18.60+rpt-rpi-v8` as `uname -r` prints it; empty = current). It builds
+  from the tag and attaches any package the release doesn't already have.
+  Running it from here needs a token with admin rights on the repository
+  (`gh workflow run` returns HTTP 403 otherwise); the web UI is fine.
+* **Gitea / GitLab**: run CI by hand on the tag with `kernel_releases` /
+  `KERNEL_RELEASES` set, download the `rpi3-binary-deb` artifact, and attach
+  the `sinput-modules-*.deb` to the release by hand.
+* **Locally**: `scripts/build-rpi-debs.sh` in an arm64 `debian:trixie`
+  container against a checkout of the tag (see
+  [`docs/rpi-hil.md`](docs/rpi-hil.md)), then
+  `gh release upload <tag> out/sinput-modules-*.deb`.
+
+GitHub stores `+` in asset names as `.`, so
+`sinput-modules-6.18.60+rpt-rpi-v8_0.4.1_arm64.deb` shows up as
+`sinput-modules-6.18.60.rpt-rpi-v8_0.4.1_arm64.deb`; the package inside is
+unchanged.
 
 ## Credentials needed
 

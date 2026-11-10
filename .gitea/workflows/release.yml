@@ -10,7 +10,7 @@ on:
 # same push that creates the tag also pushes the branch commit, which
 # triggers .gitea/workflows/ci.yml's full check suite independently, so
 # this workflow doesn't need to re-verify the build -- it only needs to
-# build the two release artifacts.
+# build the release .deb files.
 #
 # This does NOT create a Gitea Release automatically (unlike the GitHub
 # file, which does). The v0.1.0 tag push hit a real, infra-specific
@@ -25,7 +25,7 @@ on:
 # runner/container-network configuration question on the host running
 # act_runner, not something fixable from workflow YAML alone.
 #
-# So instead: build both .deb files and upload them as a normal
+# So instead: build the .deb files and upload them as a normal
 # workflow artifact (downloadable from the Actions run), along with the
 # generated release notes. Pick the release from the already-pushed tag
 # in the Gitea web UI and attach the downloaded files by hand. If the
@@ -58,21 +58,11 @@ jobs:
         run: |
           mkdir -p out
           ./scripts/build-source-deb.sh out
-      - name: Trust the Raspberry Pi apt archive
-        run: |
-          curl -fsSL \
-            https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb \
-            -o /tmp/keyring.deb
-          dpkg -i /tmp/keyring.deb
-          echo 'deb http://archive.raspberrypi.com/debian/ trixie main' \
-            > /etc/apt/sources.list.d/raspi.list
-          apt-get update -qq
-      - name: Install RPi3/RPi4 (rpi-v8) kernel headers
-        run: apt-get install -y -qq linux-headers-rpi-v8
-      - name: Build binary .deb
-        run: |
-          kdir=$(ls -d /lib/modules/*/build | head -1)
-          ./scripts/build-binary-deb.sh "$kdir" out
+      # sinput-common plus one sinput-modules-<kernel> .deb for the
+      # archive's current rpi-v8 kernel. For more kernels on an existing
+      # release later, see the "Extra kernels" section of RELEASE.md.
+      - name: Build binary .debs
+        run: ./scripts/build-rpi-debs.sh -o out
       - name: Generate release notes
         run: |
           prev_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)

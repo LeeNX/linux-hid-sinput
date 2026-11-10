@@ -2,9 +2,9 @@
 set -eu
 
 # Installs the runtime VID/PID support (see README.md "Adding your own
-# VID/PID") for a plain `make`/dkms-install.sh install -- the two .deb
-# packages carry the same three files via their own postinst instead, so
-# this script is only needed outside of that packaging.
+# VID/PID") for a plain `make`/dkms-install.sh install -- the .deb
+# packages carry the same three files in sinput-common instead, so this
+# script is only needed outside of that packaging.
 #
 # Usage: sudo ./scripts/install-udev-support.sh
 # Run from the repository root.

@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      kernel_releases:
+        description: >-
+          Raspberry Pi kernel release(s) for rpi3-binary-deb, space-separated
+          (`uname -r` on the Pi, e.g. 6.18.60+rpt-rpi-v8, or just 6.18.60).
+          Empty = the archive's current rpi-v8 kernel.
+        required: false
+        default: ""
 
 # NOTE: `runs-on: ubuntu-latest` assumes a runner label of that name is
 # registered on the act_runner instance. Adjust if your runner uses a
@@ -157,22 +165,28 @@ jobs:
           curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
           apt-get install -y -qq nodejs git
       - uses: actions/checkout@v7.0.1
-      - name: Build source .deb
+      - name: Build source and common .debs
         run: |
           mkdir -p out
+          ./scripts/build-common-deb.sh out
           ./scripts/build-source-deb.sh out
       - name: Install via dpkg (exercises dkms add/build/install for real)
         run: |
           kver=$(ls /lib/modules)
           ln -sfn "/lib/modules/${kver}" "/lib/modules/$(uname -r)" 2>/dev/null || true
-          dpkg -i out/*.deb
+          dpkg -i out/sinput-common_*.deb out/sinput-dkms_*.deb
           test -e "/lib/modules/${kver}/updates/dkms/sinput.ko"
           version="$(grep '^PACKAGE_VERSION=' dkms.conf | cut -d'"' -f2)"
           dkms status | grep -q "sinput/${version}.*installed"
       - name: Remove via dpkg (exercises dkms remove for real)
         run: |
           dpkg -r sinput-dkms
-          ! dkms status | grep -q "^sinput/"
+          if dkms status | grep -q "^sinput/"; then echo "sinput still registered with dkms" >&2; exit 1; fi
+          dpkg -P sinput-common
+      # Two sinput-modules-<kernel> packages side by side with
+      # sinput-common, e.g. across a Raspberry Pi kernel upgrade.
+      - name: Kernel module packages coexist
+        run: ./scripts/test-deb-coexist.sh "$(ls -d /lib/modules/*/build | head -1)"
       - uses: actions/upload-artifact@v3.2.2
         with:
           name: sinput-dkms-source-deb
@@ -202,23 +216,15 @@ jobs:
           curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
           apt-get install -y -qq nodejs git
       - uses: actions/checkout@v7.0.1
-      - name: Trust the Raspberry Pi apt archive
+      # Sets up the Raspberry Pi apt archive, installs each kernel's exact
+      # headers and builds one .deb per kernel plus sinput-common. Same
+      # script as the release workflows and local podman builds.
+      - name: Build binary .debs
+        env:
+          KERNEL_RELEASES: ${{ inputs.kernel_releases }}
         run: |
-          curl -fsSL \
-            https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb \
-            -o /tmp/keyring.deb
-          dpkg -i /tmp/keyring.deb
-          echo 'deb http://archive.raspberrypi.com/debian/ trixie main' \
-            > /etc/apt/sources.list.d/raspi.list
-          apt-get update -qq
-      - name: Install RPi3/RPi4 (rpi-v8) kernel headers
-        run: apt-get install -y -qq linux-headers-rpi-v8
-      - name: Build binary .deb
-        run: |
-          kdir=$(ls -d /lib/modules/*/build | head -1)
-          echo "Building against: $kdir"
-          mkdir -p out
-          ./scripts/build-binary-deb.sh "$kdir" out
+          # Unquoted on purpose: a space-separated list, possibly empty.
+          ./scripts/build-rpi-debs.sh -o out $KERNEL_RELEASES
       - uses: actions/upload-artifact@v3.2.2
         with:
           name: sinput-rpi3-arm64-deb

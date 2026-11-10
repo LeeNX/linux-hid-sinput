@@ -108,19 +108,52 @@ assuming it still matches.
 
 ## Building the `.deb`
 
-Once the correct kernel headers package is installed and the repo is
-trusted, [`scripts/build-binary-deb.sh`](../scripts/build-binary-deb.sh) does the rest — it doesn't know or
-care about Raspberry Pi specifically, it just needs a `KDIR` pointing at
-already-installed headers:
+[`scripts/build-rpi-debs.sh`](../scripts/build-rpi-debs.sh) does all of the
+above (archive keyring, exact headers) and the build, for one or more kernel
+releases at once. Run it as root in an arm64 `debian:trixie` container:
 
 ```sh
-kdir=$(ls -d /lib/modules/*/build | head -1)
-./scripts/build-binary-deb.sh "$kdir" out/
+./scripts/build-rpi-debs.sh --list                       # kernels the archive has headers for
+./scripts/build-rpi-debs.sh -o out                       # the archive's current kernel
+./scripts/build-rpi-debs.sh -o out 6.18.50 6.18.60       # specific kernels (`uname -r` on the Pi)
 ```
 
-It derives the kernel release from `KDIR`'s parent directory name, so the
-output is always named for the exact kernel it was built against, e.g.
-`sinput-modules-6.18.50+rpt-rpi-v8_0.1.0_arm64.deb`.
+It writes `sinput-common_<version>_all.deb` plus one
+`sinput-modules-<kernel-release>_<version>_arm64.deb` per kernel, e.g.
+`sinput-modules-6.18.60+rpt-rpi-v8_0.4.1_arm64.deb`. Set `APT_PROXY` (e.g.
+`http://192.168.101.10:3142`) to route apt through a local cache.
+
+Under the hood it calls
+[`scripts/build-binary-deb.sh`](../scripts/build-binary-deb.sh) once per
+kernel, with `KDIR=/lib/modules/<release>/build`. That script doesn't know
+about Raspberry Pi at all and can be used directly against any installed
+headers; it names the package after `KDIR`'s parent directory, so pass the
+`/lib/modules/<release>/build` symlink, not the `/usr/src/linux-headers-*`
+path it points to.
+
+### Locally with podman
+
+```sh
+podman run -d --name sinput-rpi-build --arch arm64 debian:trixie sleep infinity   # once
+podman start sinput-rpi-build
+git archive HEAD | podman exec -i sinput-rpi-build sh -c 'rm -rf /src && mkdir /src && tar -x -C /src'
+podman exec sinput-rpi-build /src/scripts/build-rpi-debs.sh -o /out 6.18.60
+podman cp sinput-rpi-build:/out/. ./out/
+```
+
+Keeping one named container around means the archive setup and already
+installed headers are reused between builds.
+
+### In CI, for a kernel that came out after a release
+
+* **Any platform, artifact only:** run the CI workflow by hand
+  (`workflow_dispatch` on GitHub/Gitea, "Run pipeline" on GitLab) on the
+  branch or tag you want, with `kernel_releases` (GitLab: the
+  `KERNEL_RELEASES` variable) set, e.g. `6.18.60`. The `rpi3-binary-deb`
+  job's artifact has the `.deb`s.
+* **GitHub, straight onto the release:** run the "Extra kernel .debs"
+  workflow ([`.github/workflows/rpi-kernel-debs.yml`](../.github/workflows/rpi-kernel-debs.yml))
+  with the release tag and kernel list. See [`RELEASE.md`](../RELEASE.md).
 
 ## Verifying before trusting an artifact
 
@@ -142,7 +175,7 @@ against headers matching what the Pi is actually running.
 ## Installing on the Pi
 
 ```sh
-sudo dpkg -i sinput-modules-<release>_<version>_arm64.deb
+sudo dpkg -i sinput-common_<version>_all.deb sinput-modules-<release>_<version>_arm64.deb
 sudo modprobe sinput
 ```
 
@@ -150,13 +183,31 @@ The package's `postinst`/`postrm` run `depmod -a <release>` so the module
 shows up in `modules.dep` for that kernel; it does not touch any other
 installed kernel's module list.
 
+Packages for several kernels can be installed at once. Do that across a
+Raspberry Pi OS kernel upgrade: install the new kernel's package before
+rebooting into it, and the module is there whichever kernel boots. Remove
+the old kernel's package once you no longer boot it.
+
+Module packages from 0.3.0 and 0.4.0 shipped `/etc/sinput/ids.conf`
+themselves, so a second kernel's package failed with `trying to overwrite
+'/etc/sinput/ids.conf'`. Installing 0.4.1's `sinput-common` takes those
+files over from an installed older `sinput-dkms` or
+`sinput-modules-6.18.50+rpt-rpi-v8`, the only kernel those releases were
+published for. It also covers `sinput-modules-6.18.60+rpt-rpi-v8`, which
+was never published but was built ad hoc for 0.4.0. It keeps any local
+edits to `ids.conf`, and the old package's module stays in place.
+`sinput-common` then refuses to be removed until those older packages are
+upgraded or removed, since they rely on its udev rule.
+
+`dpkg` can only do that for packages `sinput-common` names in its
+`Replaces:` field. If an older module package for some other kernel is
+installed (your own ad hoc build, say), the conflict error still appears:
+remove that package first (`sudo dpkg -r sinput-modules-<release>`, which
+keeps your edited `ids.conf`), then install.
+
 ## Reproducing the CI job locally
 
-See the `rpi3-binary-deb` job in [`.gitea/workflows/ci.yml`](../.gitea/workflows/ci.yml) for the exact
-commands run in CI. It targets trixie's `linux-headers-rpi-v8`
-meta-package (i.e. "whatever trixie currently considers current"). To
-pin an exact historical version instead — recommended once you have a
-real Pi and want a stable, non-drifting HIL rig — replace
-`linux-headers-rpi-v8` with the specific `linux-headers-<version>+rpt-rpi-v8`
-package name found in the Packages index, and record that pinned version
-here or in the workflow.
+The `rpi3-binary-deb` CI job is just `./scripts/build-rpi-debs.sh -o out`,
+the same as the podman steps above. With no kernel given it targets the
+archive's `linux-headers-rpi-v8` metapackage, i.e. whatever is current; pass
+an exact release to pin it, as a stable HIL rig should.
