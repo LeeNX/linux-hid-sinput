@@ -188,11 +188,19 @@ Raspberry Pi OS kernel upgrade: install the new kernel's package before
 rebooting into it, and the module is there whichever kernel boots. Remove
 the old kernel's package once you no longer boot it.
 
-Packages from 0.4.0 and earlier shipped `/etc/sinput/ids.conf` themselves,
-so a second kernel's package failed with `trying to overwrite
+Module packages from 0.3.0 and 0.4.0 shipped `/etc/sinput/ids.conf`
+themselves, so a second kernel's package failed with `trying to overwrite
 '/etc/sinput/ids.conf'`. Installing 0.4.1's `sinput-common` takes those
-files over from an installed older package, keeping any local edits to
-`ids.conf`; the old package's module stays in place.
+files over from an installed `sinput-dkms` or
+`sinput-modules-6.18.50+rpt-rpi-v8` (the only kernel those releases were
+published for) or `sinput-modules-6.18.60+rpt-rpi-v8`. It keeps any local
+edits to `ids.conf`, and the old package's module stays in place.
+
+`dpkg` can only do that for packages `sinput-common` names in its
+`Replaces:` field. If an older module package for some other kernel is
+installed (your own ad hoc build, say), the conflict error still appears:
+remove that package first (`sudo dpkg -r sinput-modules-<release>`, which
+keeps your edited `ids.conf`), then install.
 
 ## Reproducing the CI job locally
 

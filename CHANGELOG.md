@@ -15,9 +15,11 @@ device over BLE; see [`docs/research.md`](docs/research.md) for each run.
   upgrade. Installing a second one used to fail with `trying to overwrite
   '/etc/sinput/ids.conf'`, because every package (and `sinput-dkms`) shipped
   its own copy of the udev rule, helper script and `ids.conf`. Those now
-  live in a new `sinput-common` package that the others depend on; it takes
-  the files over from installed 0.4.0-and-earlier packages, keeping local
-  `ids.conf` edits.
+  live in a new `sinput-common` package that the others depend on. It takes
+  the files over from an installed older `sinput-dkms` or published
+  `sinput-modules-6.18.50+rpt-rpi-v8`, keeping local `ids.conf` edits; an
+  older ad hoc build for any other kernel has to be removed first (see
+  `docs/rpi-hil.md`).
 
 ### Added
 

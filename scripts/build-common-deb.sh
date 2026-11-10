@@ -29,10 +29,22 @@ PKG="${PACKAGE_NAME}-common"
 # First version where the shared files live in sinput-common. Older
 # sinput-dkms / sinput-modules-* packages still own them, so Replaces:
 # lets this package take them over on upgrade instead of failing on the
-# same file conflict. There's no wildcard for package names, so every
-# per-kernel package name that was ever published is listed explicitly
-# (all GitHub/GitLab/Gitea releases up to 0.4.0 shipped 6.18.50; 6.18.60
-# was built ad hoc for 0.4.0 and may be installed on a test rig).
+# same file conflict.
+#
+# dpkg has no wildcard for package names, so the per-kernel names are
+# listed explicitly. Checked 2026-11-10:
+#   - Only 0.3.0 and 0.4.0 module packages contain the shared files
+#     (added in 6f3935e, first released in v0.3.0); 0.2.x and older can't
+#     conflict with this package.
+#   - Every GitHub release (v0.1.0-v0.4.0) and GitLab release
+#     (v0.2.0-v0.4.0) shipped exactly one module package, for
+#     6.18.50+rpt-rpi-v8. Gitea releases are attached by hand from the same
+#     tag builds (RELEASE.md), but its API wasn't reachable to confirm.
+#   - 6.18.60+rpt-rpi-v8 at 0.4.0 was only ever built ad hoc for the
+#     rp3b-ble-hil rig, never published.
+# An unlisted package (another ad hoc build) still conflicts: remove it
+# before installing this, as docs/rpi-hil.md says. Add a name here if a
+# published 0.4.0-or-older package for another kernel ever turns up.
 #
 # Deliberately Replaces: without Breaks:. Breaks would force an old
 # 0.4.0 module package to be upgraded or removed before this could
