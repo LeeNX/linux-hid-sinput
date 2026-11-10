@@ -39,7 +39,7 @@ Options:
 Environment:
   RPI_FLAVOUR  Kernel flavour (default: rpi-v8, used by Pi 3/4/Zero 2 W
                and also bootable on Pi 5; rpi-2712 is Pi 5's own).
-  APT_PROXY    Optional apt HTTP proxy, e.g. http://192.168.101.10:3142.
+  APT_PROXY    Optional apt HTTP proxy, e.g. http://192.0.2.10:3142.
 
 Must run as root on arm64 Debian trixie (e.g. a debian:trixie container).
 EOF

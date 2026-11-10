@@ -1,0 +1,160 @@
+name: Ubuntu kernel .debs
+
+# Ad-hoc: build sinput-common plus sinput-modules-<kernel> .debs for one
+# Ubuntu release and one or more of its kernels, as a workflow artifact,
+# optionally also attached to an existing GitHub Release. The GitHub
+# counterpart of scripts/podman-build-ubuntu-debs.sh; see docs/ubuntu.md.
+#
+# Run it from the Actions tab ("Run workflow"). The ref picker there
+# selects which version of *this file* (and of
+# scripts/build-ubuntu-debs.sh) runs; the `ref` input selects the source
+# that gets built, e.g. a release tag. Leave `ref` empty to build the
+# picked branch itself.
+#
+# The release list below is fixed and has to be edited by hand when
+# Ubuntu ships a release (April and October) or one reaches end of life:
+# keep the newest three still supported. Checked 2026-11-10 against
+# https://changelogs.ubuntu.com/meta-release; 25.10 questing is EOL, so its
+# archive moved to old-releases.ubuntu.com and its headers no longer
+# install.
+#
+# The build runs in `docker run ubuntu:<codename>` on the runner rather
+# than as a job `container:`, so actions/checkout and upload-artifact run
+# on the runner's own Node and the ubuntu image needs nothing added.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ubuntu_release:
+        description: Ubuntu release
+        type: choice
+        options:
+          - resolute (26.04 LTS)
+          - stonking (26.10)
+          - noble (24.04 LTS)
+        default: resolute (26.04 LTS)
+      kernel_releases:
+        description: >-
+          Kernel release(s), space-separated (`uname -r` on the target, e.g.
+          7.0.0-43-generic, or just 7.0.0-43). Empty = the release's
+          current generic kernel.
+        required: false
+        default: ""
+      arch:
+        description: Architecture
+        type: choice
+        options: [amd64, arm64]
+        default: amd64
+      ref:
+        description: >-
+          Tag or branch to build, e.g. v0.4.1. Empty = the branch picked
+          above.
+        required: false
+        default: ""
+      attach:
+        description: >-
+          Also attach the .debs to the GitHub Release for `ref` (must be a
+          release tag)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    steps:
+      # This workflow's own ref, for scripts/build-ubuntu-debs.sh: release
+      # tags before it existed can still be built.
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: tools
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          path: src
+      - name: Check inputs and source
+        # Inputs via env, not ${{ }} in the script: they're user input.
+        env:
+          RELEASE: ${{ inputs.ubuntu_release }}
+          KERNEL_RELEASES: ${{ inputs.kernel_releases }}
+          REF: ${{ inputs.ref || github.ref_name }}
+        run: |
+          set -eu
+          case "$KERNEL_RELEASES" in
+          *[!0-9A-Za-z.+_\ -]*)
+            echo "::error::kernel_releases may only hold kernel release names separated by spaces, got: $KERNEL_RELEASES"
+            exit 1
+            ;;
+          esac
+          # sinput-common (v0.4.1) is what lets module packages for
+          # several kernels, and for Ubuntu next to Raspberry Pi OS, share
+          # one release.
+          if [ ! -x src/scripts/build-common-deb.sh ]; then
+            echo "::error::${REF} predates sinput-common (v0.4.1); build from v0.4.1 or later"
+            exit 1
+          fi
+          # Older tags lack the Ubuntu build script; use this workflow's.
+          if [ ! -x src/scripts/build-ubuntu-debs.sh ]; then
+            cp tools/scripts/build-ubuntu-debs.sh src/scripts/
+          fi
+          echo "CODENAME=${RELEASE%% *}" >> "$GITHUB_ENV"
+          # Artifact names can't contain '/', which branch names can.
+          echo "REF_SLUG=$(printf '%s' "$REF" | tr -c 'A-Za-z0-9._-' '-')" >> "$GITHUB_ENV"
+      - name: Build .debs in ubuntu:${{ env.CODENAME }}
+        env:
+          KERNEL_RELEASES: ${{ inputs.kernel_releases }}
+        run: |
+          set -euf
+          # Unquoted on purpose: a space-separated list, possibly empty
+          # (set -f: no globbing; the characters were checked above).
+          # shellcheck disable=SC2086
+          docker run --rm -v "$PWD/src:/src" "docker.io/library/ubuntu:$CODENAME" \
+            /src/scripts/build-ubuntu-debs.sh -o /src/out $KERNEL_RELEASES
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: sinput-ubuntu-${{ env.CODENAME }}-${{ inputs.arch }}-debs-${{ env.REF_SLUG }}
+          path: src/out/*.deb
+          # No .debs (e.g. a kernel_releases value the builder took as an
+          # option) is a failure, not a warning.
+          if-no-files-found: error
+      - name: Attach to the release
+        if: ${{ inputs.attach }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_API: https://api.github.com
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.ref }}
+        run: |
+          set -eu
+          if [ -z "$TAG" ]; then
+            echo "::error::attach needs ref set to a release tag"
+            exit 1
+          fi
+          release=$(curl -fsSL "$GITHUB_API/repos/$REPO/releases/tags/$TAG" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json") || {
+            echo "::error::no GitHub Release for $TAG -- run the Release workflow (push the tag) first"
+            exit 1
+          }
+          # printf, not echo: see the same note in release.yml.
+          upload_url=$(printf '%s' "$release" | jq -r .upload_url | sed 's/{.*}//')
+          existing=$(printf '%s' "$release" | jq -r '.assets[].name')
+
+          # Already-attached names are skipped, so sinput-common (usually
+          # there from the release itself) and re-runs are harmless.
+          for f in src/out/*.deb; do
+            name=$(basename "$f")
+            # GitHub stores '+' in asset names as '.'.
+            stored=$(printf '%s' "$name" | tr '+' '.')
+            if printf '%s\n' "$existing" | grep -qxF "$stored"; then
+              echo "Already attached, skipping: $stored"
+              continue
+            fi
+            curl -fsSL -X POST "${upload_url}?name=${name}" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$f" >/dev/null
+            echo "Attached: $stored"
+          done

@@ -8,6 +8,23 @@ device over BLE; see [`docs/research.md`](docs/research.md) for each run.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-10
+
+### Added
+
+- `scripts/podman-build-ubuntu-debs.sh` builds precompiled packages for an
+  exact Ubuntu kernel in an `ubuntu:<codename>` podman container and copies
+  them to a local directory. `-t HOST` reads the target's Ubuntu release,
+  arch and running kernel over ssh and builds for that; `-H HOST` runs
+  podman on another machine. `scripts/build-ubuntu-debs.sh` does the build
+  inside the container, as `scripts/build-rpi-debs.sh` does for Raspberry
+  Pi OS. Verified on Ubuntu 26.04 with kernel `7.0.0-43-generic`.
+- A GitHub "Ubuntu kernel .debs" workflow runs the same build by hand from
+  the Actions tab, for one of the three newest supported Ubuntu releases
+  and any of its kernels, optionally attaching to a release.
+- `docs/ubuntu.md`: building, a one-line install on the target with `apt`,
+  Secure Boot, kernel upgrades and removal.
+
 ## [0.4.1] - 2026-11-10
 
 ### Fixed
@@ -159,7 +176,8 @@ First release.
 - CI on Gitea, GitHub and GitLab, and release tooling (`scripts/release.sh`
   plus release workflows that attach both `.deb` files).
 
-[Unreleased]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.2.2...v0.3.0

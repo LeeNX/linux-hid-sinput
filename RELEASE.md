@@ -121,6 +121,11 @@ be installed next to each other.
   from the tag and attaches any package the release doesn't already have.
   Running it from here needs a token with admin rights on the repository
   (`gh workflow run` returns HTTP 403 otherwise); the web UI is fine.
+* **Ubuntu (GitHub)**: Actions → "Ubuntu kernel .debs" → Run workflow, with
+  the Ubuntu release, kernel release(s) (empty = that release's current
+  kernel), `ref` set to the tag and `attach` on. Releases don't include
+  Ubuntu packages by default; this is how they're added. See
+  [`docs/ubuntu.md`](docs/ubuntu.md).
 * **Gitea / GitLab**: run CI by hand on the tag with `kernel_releases` /
   `KERNEL_RELEASES` set, download the `rpi3-binary-deb` artifact, and attach
   the `sinput-modules-*.deb` to the release by hand.
