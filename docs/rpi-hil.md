@@ -191,10 +191,13 @@ the old kernel's package once you no longer boot it.
 Module packages from 0.3.0 and 0.4.0 shipped `/etc/sinput/ids.conf`
 themselves, so a second kernel's package failed with `trying to overwrite
 '/etc/sinput/ids.conf'`. Installing 0.4.1's `sinput-common` takes those
-files over from an installed `sinput-dkms` or
-`sinput-modules-6.18.50+rpt-rpi-v8` (the only kernel those releases were
-published for) or `sinput-modules-6.18.60+rpt-rpi-v8`. It keeps any local
+files over from an installed older `sinput-dkms` or
+`sinput-modules-6.18.50+rpt-rpi-v8`, the only kernel those releases were
+published for. It also covers `sinput-modules-6.18.60+rpt-rpi-v8`, which
+was never published but was built ad hoc for 0.4.0. It keeps any local
 edits to `ids.conf`, and the old package's module stays in place.
+`sinput-common` then refuses to be removed until those older packages are
+upgraded or removed, since they rely on its udev rule.
 
 `dpkg` can only do that for packages `sinput-common` names in its
 `Replaces:` field. If an older module package for some other kernel is

@@ -56,9 +56,12 @@ jobs:
         with:
           ref: ${{ inputs.tag }}
       - name: Check the tag supports side-by-side kernel packages
+        # Via env, not ${{ }} in the script: the tag name is user input.
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
           if [ ! -x scripts/build-rpi-debs.sh ] || [ ! -x scripts/build-common-deb.sh ]; then
-            echo "::error::${{ inputs.tag }} predates sinput-common (v0.4.1); its per-kernel packages can't be installed side by side, so extra kernels can't be added to it"
+            echo "::error::${TAG} predates sinput-common (v0.4.1); its per-kernel packages can't be installed side by side, so extra kernels can't be added to it"
             exit 1
           fi
       - name: Build binary .debs

@@ -51,10 +51,19 @@ PKG="${PACKAGE_NAME}-common"
 # install -- but an old package for a kernel you're still able to boot
 # keeps working fine after losing these files to this package, which is
 # the whole point of letting kernel packages coexist.
+#
+# The flip side: such an old package doesn't depend on this one, so dpkg
+# would happily remove this package from under it, taking the udev rule
+# and helper with it. The prerm below refuses that while any of these
+# packages is still installed at a pre-split version.
 SPLIT_VERSION="0.4.1~"
-REPLACES="${PACKAGE_NAME}-dkms (<< ${SPLIT_VERSION})"
+LEGACY_PKGS="${PACKAGE_NAME}-dkms"
 for old_kernel in 6.18.50+rpt-rpi-v8 6.18.60+rpt-rpi-v8; do
-	REPLACES="${REPLACES}, ${PACKAGE_NAME}-modules-${old_kernel} (<< ${SPLIT_VERSION})"
+	LEGACY_PKGS="${LEGACY_PKGS} ${PACKAGE_NAME}-modules-${old_kernel}"
+done
+REPLACES=""
+for pkg in $LEGACY_PKGS; do
+	REPLACES="${REPLACES:+${REPLACES}, }${pkg} (<< ${SPLIT_VERSION})"
 done
 
 WORKDIR="$(mktemp -d)"
@@ -90,6 +99,33 @@ set -e
 udevadm control --reload || true
 POSTEOF
 chmod 0755 "$WORKDIR/DEBIAN/postinst"
+
+# Only on an actual removal ("remove"; purge runs prerm with "remove" too).
+# Upgrades of this package ("upgrade") and dpkg's error-unwind paths
+# ("deconfigure", "failed-upgrade") must go through.
+cat > "$WORKDIR/DEBIAN/prerm" <<PREEOF
+#!/bin/sh
+set -e
+[ "\$1" = "remove" ] || exit 0
+blocking=""
+for pkg in ${LEGACY_PKGS}; do
+	status="\$(dpkg-query -W -f='\${db:Status-Status} \${Version}' "\$pkg" 2>/dev/null || true)"
+	case "\$status" in
+	"installed "*)
+		if dpkg --compare-versions "\${status#installed }" lt "${SPLIT_VERSION}"; then
+			blocking="\$blocking \$pkg"
+		fi
+		;;
+	esac
+done
+if [ -n "\$blocking" ]; then
+	echo "${PKG}: not removing; these older packages still rely on its" >&2
+	echo "udev rule and helper script:\$blocking" >&2
+	echo "Remove or upgrade them first." >&2
+	exit 1
+fi
+PREEOF
+chmod 0755 "$WORKDIR/DEBIAN/prerm"
 
 cat > "$WORKDIR/DEBIAN/postrm" <<'POSTEOF'
 #!/bin/sh
