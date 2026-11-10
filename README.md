@@ -293,6 +293,21 @@ exact kernel headers for each release given (default: the archive's current
 kernel) and builds `sinput-common` plus one package per kernel. See
 [`docs/rpi-hil.md`](docs/rpi-hil.md).
 
+For Ubuntu targets,
+[`./scripts/podman-build-ubuntu-debs.sh`](scripts/podman-build-ubuntu-debs.sh)
+does the same in an `ubuntu:<codename>` podman container
+(via [`scripts/build-ubuntu-debs.sh`](scripts/build-ubuntu-debs.sh)) and
+copies the `.deb`s to `out/`. `-t HOST` reads the target's Ubuntu release,
+arch and running kernel over ssh; `-H HOST` runs podman on another machine.
+[`docs/ubuntu.md`](docs/ubuntu.md) covers the one-line install on the
+target, Secure Boot and kernel upgrades:
+
+```sh
+scripts/podman-build-ubuntu-debs.sh -t my-ubuntu-box              # its running kernel
+scripts/podman-build-ubuntu-debs.sh -r noble 6.8.0-90-generic     # explicit
+scripts/podman-build-ubuntu-debs.sh -r noble --list               # kernels with headers
+```
+
 Both scripts are plain POSIX `sh`, no `dh`/`dpkg-buildpackage` involved —
 `dkms mkdeb`/`mkbmdeb`, despite being documented in Debian's own
 `/usr/share/doc/dkms/HOWTO.Debian`, no longer exist in the dkms shipped with

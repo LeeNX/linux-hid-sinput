@@ -8,6 +8,18 @@ device over BLE; see [`docs/research.md`](docs/research.md) for each run.
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/podman-build-ubuntu-debs.sh` builds precompiled packages for an
+  exact Ubuntu kernel in an `ubuntu:<codename>` podman container and copies
+  them to a local directory. `-t HOST` reads the target's Ubuntu release,
+  arch and running kernel over ssh and builds for that; `-H HOST` runs
+  podman on another machine. `scripts/build-ubuntu-debs.sh` does the build
+  inside the container, as `scripts/build-rpi-debs.sh` does for Raspberry
+  Pi OS. Verified on Ubuntu 26.04 with kernel `7.0.0-43-generic`.
+- `docs/ubuntu.md`: building, a one-line install on the target with `apt`,
+  Secure Boot, kernel upgrades and removal.
+
 ## [0.4.1] - 2026-11-10
 
 ### Fixed
