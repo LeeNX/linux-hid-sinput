@@ -26,9 +26,17 @@ KERNEL_RELEASE, against Raspberry Pi's own kernel headers.
 
 KERNEL_RELEASE is what `uname -r` prints on the Pi, e.g.
 6.18.60+rpt-rpi-v8. The short form 6.18.60 is also accepted and expanded
-with the current flavour (+rpt-rpi-v8 by default). With no
-KERNEL_RELEASE, builds for whatever kernel the archive currently calls
-current (the linux-headers-<flavour> metapackage's target).
+with the current flavour (+rpt-rpi-v8 by default). It can also be one
+of these, looked up in the archive:
+
+  latest    the archive's current kernel (the linux-headers-<flavour>
+            metapackage's target). The default.
+  previous  the kernel before latest in the same series
+  first     the oldest kernel in the same series, e.g. 6.18.29 when
+            latest is 6.18.60
+
+Releases build `first previous latest`. A kernel that two of them name
+is built once.
 
 Options:
   -o DIR     Output directory (default: out).
@@ -106,16 +114,53 @@ if $LIST_ONLY; then
 	exit 0
 fi
 
-if [ -z "$RELEASES" ]; then
-	RELEASES="$(apt-cache depends "linux-headers-${FLAVOUR}" |
-		sed -n "s/^ *Depends: linux-headers-\([0-9][^ ]*+rpt-${FLAVOUR}\)\$/\1/p" | head -1)"
-	[ -n "$RELEASES" ] || die "couldn't resolve linux-headers-${FLAVOUR} to a kernel release"
-	echo "No kernel release given; archive's current ${FLAVOUR} kernel is ${RELEASES}"
-fi
+# The kernel the linux-headers-<flavour> metapackage currently points at.
+current() {
+	apt-cache depends "linux-headers-${FLAVOUR}" |
+		sed -n "s/^ *Depends: linux-headers-\([0-9][^ ]*+rpt-${FLAVOUR}\)\$/\1/p" | head -1
+}
+
+# Every kernel in the same series as $1, oldest first.
+series() {
+	prefix="$(printf '%s\n' "$1" | sed 's/^\([0-9]*\.[0-9]*\.\).*/\1/')"
+	available | awk -v p="$prefix" 'index($0, p) == 1'
+}
+
+# latest / previous / first -> a kernel release (series = same major.minor, e.g. 6.18.);
+# anything else is passed through as a release.
+resolve() {
+	case "$1" in
+	latest | previous | first)
+		cur="$(current)"
+		[ -n "$cur" ] || die "couldn't resolve linux-headers-${FLAVOUR} to a kernel release"
+		case "$1" in
+		latest) echo "$cur" ;;
+		first) series "$cur" | head -1 ;;
+		previous) series "$cur" | awk -v c="$cur" '$0 == c { print p; exit } { p = $0 }' ;;
+		esac
+		;;
+	*) echo "$1" ;;
+	esac
+}
 
 mkdir -p "$OUTDIR"
-for rel in $RELEASES; do
+BUILT=" "
+for want in ${RELEASES:-latest}; do
+	rel="$(resolve "$want")"
+	if [ -z "$rel" ]; then
+		# resolve's die only left its $(...) subshell.
+		[ -n "$(current)" ] || die "couldn't resolve linux-headers-${FLAVOUR} to a kernel release"
+		echo "No ${want} kernel: the current kernel is the only one in its series. Skipping."
+		continue
+	fi
 	case "$rel" in *+*) ;; *) rel="${rel}+rpt-${FLAVOUR}" ;; esac
+	case "$BUILT" in *" $rel "*)
+		echo "${want} is ${rel}, already built. Skipping."
+		continue
+		;;
+	esac
+	BUILT="${BUILT}${rel} "
+	[ "$want" = "$rel" ] || echo "${want}: ${rel}"
 	if ! available | grep -qxF "$rel"; then
 		echo "Kernel releases with headers in the archive:" >&2
 		available >&2

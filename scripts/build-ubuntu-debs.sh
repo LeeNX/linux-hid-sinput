@@ -24,9 +24,19 @@ KERNEL_RELEASE, against Ubuntu's own kernel headers.
 
 KERNEL_RELEASE is what `uname -r` prints on the target, e.g.
 7.0.0-43-generic. The short form 7.0.0-43 is also accepted and expanded
-with the flavour (-generic by default). With no KERNEL_RELEASE, builds
-for whatever kernel this Ubuntu release currently calls current (the
-linux-headers-<flavour> metapackage's target).
+with the flavour (-generic by default). It can also be one of these,
+looked up in apt:
+
+  latest    this Ubuntu release's current kernel (the
+            linux-headers-<flavour> metapackage's target). The default.
+  previous  the kernel before latest in the same series
+  first     the oldest kernel in the same series: the one the Ubuntu
+            release shipped with, e.g. 7.0.0-14 for 26.04
+
+"Same series" keeps a release's own kernel line apart from newer
+hardware-enablement (HWE) kernels, e.g. on 24.04 previous of 6.8.0-149
+is 6.8.0-147, not a 7.0 kernel. Releases build `first previous latest`.
+A kernel that two of them name is built once.
 
 Options:
   -o DIR     Output directory (default: out).
@@ -113,18 +123,55 @@ if $LIST_ONLY; then
 	exit 0
 fi
 
-if [ -z "$RELEASES" ]; then
-	RELEASES="$(apt-cache depends "linux-headers-${FLAVOUR}" |
-		sed -n "s/^ *Depends: linux-headers-\([0-9][^ ]*-${FLAVOUR}\)\$/\1/p" | head -1)"
-	[ -n "$RELEASES" ] || die "couldn't resolve linux-headers-${FLAVOUR} to a kernel release"
-	echo "No kernel release given; ${VERSION_CODENAME}'s current ${FLAVOUR} kernel is ${RELEASES}"
-fi
+# The kernel the linux-headers-<flavour> metapackage currently points at.
+current() {
+	apt-cache depends "linux-headers-${FLAVOUR}" |
+		sed -n "s/^ *Depends: linux-headers-\([0-9][^ ]*-${FLAVOUR}\)\$/\1/p" | head -1
+}
+
+# Every kernel in the same series as $1, oldest first.
+series() {
+	prefix="$(printf '%s\n' "$1" | sed 's/-.*/-/')"
+	available | awk -v p="$prefix" 'index($0, p) == 1'
+}
+
+# latest / previous / first -> a kernel release (series = same x.y.z, e.g. 7.0.0-);
+# anything else is passed through as a release.
+resolve() {
+	case "$1" in
+	latest | previous | first)
+		cur="$(current)"
+		[ -n "$cur" ] || die "couldn't resolve linux-headers-${FLAVOUR} to a kernel release"
+		case "$1" in
+		latest) echo "$cur" ;;
+		first) series "$cur" | head -1 ;;
+		previous) series "$cur" | awk -v c="$cur" '$0 == c { print p; exit } { p = $0 }' ;;
+		esac
+		;;
+	*) echo "$1" ;;
+	esac
+}
 
 mkdir -p "$OUTDIR"
-for rel in $RELEASES; do
+BUILT=" "
+for want in ${RELEASES:-latest}; do
+	rel="$(resolve "$want")"
+	if [ -z "$rel" ]; then
+		# resolve's die only left its $(...) subshell.
+		[ -n "$(current)" ] || die "couldn't resolve linux-headers-${FLAVOUR} to a kernel release"
+		echo "No ${want} kernel: the current kernel is the only one in its series. Skipping."
+		continue
+	fi
 	# 7.0.0-43 -> 7.0.0-43-generic; anything with a third dash-field is
 	# already a full release.
 	case "$rel" in *-*-*) ;; *) rel="${rel}-${FLAVOUR}" ;; esac
+	case "$BUILT" in *" $rel "*)
+		echo "${want} is ${rel}, already built. Skipping."
+		continue
+		;;
+	esac
+	BUILT="${BUILT}${rel} "
+	[ "$want" = "$rel" ] || echo "${want}: ${rel}"
 	if ! apt-cache show "linux-headers-${rel}" >/dev/null 2>&1; then
 		echo "Kernel releases with headers in ${VERSION_CODENAME}'s apt sources:" >&2
 		available >&2

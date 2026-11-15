@@ -32,7 +32,7 @@ workflow:
 # already ran the full suite on the `main` branch push that (normally)
 # preceded it, same reasoning as .github/workflows/release.yml and
 # .gitea/workflows/release.yml not re-running CI. A tag pipeline only
-# needs to rebuild the two release artifacts (build stage, unrestricted
+# needs to rebuild the release .debs (build stage, unrestricted
 # below) and publish the release (release stage).
 .skip-on-tag: &skip-on-tag
   rules:
@@ -164,18 +164,45 @@ rpi3-binary-deb:
     - saas-linux-small-arm64
   # KERNEL_RELEASES: optional space-separated Raspberry Pi kernel
   # release(s) (`uname -r` on the Pi, e.g. 6.18.60+rpt-rpi-v8 or just
-  # 6.18.60). Set it as a variable when running a pipeline by hand
-  # (Build > Pipelines > Run pipeline) for an ad-hoc build; empty means
-  # the archive's current rpi-v8 kernel. Same script as the other CIs.
+  # 6.18.60), or latest / previous / first. Set it as a variable when
+  # running a pipeline by hand (Build > Pipelines > Run pipeline) for an
+  # ad-hoc build; empty means the archive's current rpi-v8 kernel. A tag
+  # pipeline builds `first previous latest` for the release. Same script
+  # as the other CIs.
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      variables:
+        KERNEL_RELEASES: first previous latest
+    - when: on_success
   script:
     - ./scripts/build-rpi-debs.sh -o out $KERNEL_RELEASES
   artifacts:
     paths:
       - out/*.deb
 
+# Ubuntu module .debs for the release: for each LTS release, the kernel
+# it shipped with, the previous one and the latest (see
+# scripts/build-ubuntu-debs.sh --help). Tag pipelines and hand-run
+# pipelines only. Only the module packages are kept: sinput-common
+# already comes from the jobs above.
+ubuntu-binary-debs:
+  stage: build
+  image: ubuntu:$UBUNTU_RELEASE
+  parallel:
+    matrix:
+      - UBUNTU_RELEASE: [resolute, noble]
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  script:
+    - ./scripts/build-ubuntu-debs.sh -o out first previous latest
+  artifacts:
+    paths:
+      - out/sinput-modules-*.deb
+
 # Mirrors .github/workflows/release.yml's release job: verify the tag
 # against dkms.conf, generate release notes from git log since the
-# previous tag, create the Release, and attach both .deb files -- but
+# previous tag, create the Release, and attach every .deb file -- but
 # through GitLab's own Releases API and Generic Package Registry
 # instead of GitHub's REST API, since neither surface carries over.
 #
@@ -203,6 +230,7 @@ release:
   needs:
     - dkms-source-deb
     - rpi3-binary-deb
+    - ubuntu-binary-debs
   variables:
     GIT_DEPTH: 0
   rules:

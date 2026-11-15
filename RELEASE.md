@@ -6,12 +6,23 @@ Releases are git tags, plus `.deb` files: the source DKMS package
 kernel-independent support files both of the others depend on
 (`sinput-common_<version>_all.deb`, from
 [`scripts/build-common-deb.sh`](scripts/build-common-deb.sh)), and one
-precompiled Raspberry Pi binary package per kernel
-(`sinput-modules-<kernel-release>_<version>_arm64.deb`, from
-[`scripts/build-rpi-debs.sh`](scripts/build-rpi-debs.sh) — see
-[`docs/rpi-hil.md`](docs/rpi-hil.md)). A release starts with one binary
-package, for the kernel that's current when it's tagged; more can be added
-later (see "Extra kernels" below). How those files actually reach a
+precompiled binary package per kernel
+(`sinput-modules-<kernel-release>_<version>_<arch>.deb`). Each release
+builds three kernels per target, picked when it's tagged (`first previous
+latest`, see the build scripts' `--help`):
+
+* **Raspberry Pi OS** (arm64, from
+  [`scripts/build-rpi-debs.sh`](scripts/build-rpi-debs.sh), see
+  [`docs/rpi-hil.md`](docs/rpi-hil.md)): the first kernel of the current
+  series, the previous one and the latest, e.g. 6.18.29, 6.18.50, 6.18.60.
+* **Ubuntu 26.04 and 24.04 LTS** (amd64, from
+  [`scripts/build-ubuntu-debs.sh`](scripts/build-ubuntu-debs.sh), see
+  [`docs/ubuntu.md`](docs/ubuntu.md)): for each, the kernel it shipped
+  with, the previous one and the latest. GitHub and GitLab only.
+
+There is one `sinput-common` for all of them: it's `Architecture: all` and
+the same on every target. More kernels can be added to a release later
+(see "Extra kernels" below). How those files actually reach a
 release differs by platform (see "What happens after the tag is pushed"
 below) — GitHub and GitLab both automate it fully, while Gitea builds the
 files but stops short of publishing them for a network reason specific to
@@ -76,17 +87,19 @@ pushes) triggers two things independently:
   `.gitlab-ci.yml` (skipping that pipeline's own `test`-stage jobs — see
   the `.skip-on-tag` anchor there — since the branch push already ran
   them). All three verify `dkms.conf`'s `PACKAGE_VERSION` matches the tag
-  (fails fast if a tag was created some other way) and build both `.deb`
-  files, then diverge:
+  (fails fast if a tag was created some other way) and build the `.deb`
+  files listed at the top (Ubuntu ones on GitHub and GitLab only), then
+  diverge:
   * **GitHub** generates release notes from `git log` since the previous
     tag, creates the Release via the REST API (using the auto-issued
-    `GITHUB_TOKEN`, no secret to create), and uploads both files as assets.
+    `GITHUB_TOKEN`, no secret to create), and uploads every `.deb` as an
+    asset. A second job then builds and attaches the Ubuntu packages.
   * **GitLab** does the same via its own Releases API and Generic Package
     Registry, authenticating with the auto-issued `CI_JOB_TOKEN` (no secret
     to create there either) — the `.deb` files are uploaded to the Generic
     Package Registry first, then linked onto the Release as assets, since
     GitLab has no per-release upload URL the way GitHub's response does.
-  * **Gitea** uploads both `.deb` files plus the generated release notes as
+  * **Gitea** uploads all its `.deb` files plus the generated release notes as
     a plain downloadable workflow artifact instead of creating the Release
     automatically. This Gitea instance's job containers can reach the
     public internet (they install the Raspberry Pi apt archive over HTTPS
@@ -98,7 +111,7 @@ pushes) triggers two things independently:
     that's addressed, creating the actual Gitea Release is a manual step:
     download the artifact from the workflow run, pick the release from the
     already-pushed tag in the Gitea web UI, paste in `release-notes.md`,
-    and attach the two `.deb` files.
+    and attach every `.deb` in the artifact.
 
 These release jobs are deliberately **not** chained to the main CI workflow
 (e.g. via `workflow_run`/`needs` across pipelines) — they don't re-verify
@@ -109,29 +122,35 @@ that commit separately.
 
 ## Extra kernels on an existing release
 
-When Raspberry Pi OS ships a new kernel after a release, add a
+When Raspberry Pi OS or Ubuntu ships a new kernel after a release, add a
 `sinput-modules-<new-kernel>` package to that release rather than cutting a
 new one. Releases from v0.4.1 on support this; earlier ones can't, because
 their per-kernel packages each shipped `/etc/sinput/ids.conf` and so can't
 be installed next to each other.
 
-* **GitHub**: Actions → "Extra kernel .debs" → Run workflow, with the
+* **Raspberry Pi (GitHub)**: Actions → "Raspberry Pi targeted .debs" → Run workflow, with the
   release tag (e.g. `v0.4.1`) and the kernel release(s) (e.g. `6.18.60`, or
   `6.18.60+rpt-rpi-v8` as `uname -r` prints it; empty = current). It builds
   from the tag and attaches any package the release doesn't already have.
   Running it from here needs a token with admin rights on the repository
   (`gh workflow run` returns HTTP 403 otherwise); the web UI is fine.
-* **Ubuntu (GitHub)**: Actions → "Ubuntu kernel .debs" → Run workflow, with
-  the Ubuntu release, kernel release(s) (empty = that release's current
-  kernel), `ref` set to the tag and `attach` on. Releases don't include
-  Ubuntu packages by default; this is how they're added. See
+* **Ubuntu (GitHub)**: Actions → "Ubuntu targeted .debs" → Run workflow,
+  with the Ubuntu release, kernel release(s) (empty = that release's
+  current kernel), `ref` set to the tag and `attach` on. Also the way to
+  add Ubuntu releases a release doesn't build for (e.g. 26.10). See
   [`docs/ubuntu.md`](docs/ubuntu.md).
-* **Gitea / GitLab**: run CI by hand on the tag with `kernel_releases` /
-  `KERNEL_RELEASES` set, download the `rpi3-binary-deb` artifact, and attach
-  the `sinput-modules-*.deb` to the release by hand.
+* **Raspberry Pi (Gitea / GitLab)**: run CI by hand on the tag with
+  `kernel_releases` / `KERNEL_RELEASES` set, download the `rpi3-binary-deb`
+  artifact, and attach the `sinput-modules-*.deb` to the release by hand.
+  There's no equivalent for extra Ubuntu kernels on Gitea or GitLab (the
+  GitLab `ubuntu-binary-debs` job only builds its fixed `first previous
+  latest`): build them with the GitHub workflow above or locally, and
+  attach them by hand.
 * **Locally**: `scripts/build-rpi-debs.sh` in an arm64 `debian:trixie`
   container against a checkout of the tag (see
-  [`docs/rpi-hil.md`](docs/rpi-hil.md)), then
+  [`docs/rpi-hil.md`](docs/rpi-hil.md)), or
+  `scripts/podman-build-ubuntu-debs.sh` for Ubuntu (see
+  [`docs/ubuntu.md`](docs/ubuntu.md)), then
   `gh release upload <tag> out/sinput-modules-*.deb`.
 
 GitHub stores `+` in asset names as `.`, so

@@ -62,11 +62,13 @@ jobs:
         run: |
           mkdir -p out
           ./scripts/build-source-deb.sh out
-      # sinput-common plus one sinput-modules-<kernel> .deb for the
-      # archive's current rpi-v8 kernel. For more kernels on an existing
-      # release later, see the "Extra kernels" section of RELEASE.md.
-      - name: Build binary .debs
-        run: ./scripts/build-rpi-debs.sh -o out
+      # sinput-common plus sinput-modules-<kernel> .debs for three rpi-v8
+      # kernels: the start of the current series, the one before the
+      # current one, and the current one (see build-rpi-debs.sh --help).
+      # For more kernels on an existing release later, see the "Extra
+      # kernels" section of RELEASE.md.
+      - name: Build Raspberry Pi .debs
+        run: ./scripts/build-rpi-debs.sh -o out first previous latest
       - name: Generate release notes
         run: |
           prev_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
@@ -119,3 +121,20 @@ jobs:
               -H "Content-Type: application/octet-stream" \
               --data-binary "@$f"
           done
+
+  # Ubuntu module .debs, attached once the release above exists: the
+  # kernel each LTS release shipped with, the previous one and the latest.
+  # Runs the "Ubuntu targeted .debs" workflow, so the build and attach
+  # steps live in one place. sinput-common is already attached by then
+  # and is skipped.
+  ubuntu:
+    needs: release
+    strategy:
+      matrix:
+        ubuntu_release: [resolute, noble]
+    uses: ./.github/workflows/ubuntu-kernel-debs.yml
+    with:
+      ubuntu_release: ${{ matrix.ubuntu_release }}
+      kernel_releases: first previous latest
+      ref: ${{ github.ref_name }}
+      attach: true

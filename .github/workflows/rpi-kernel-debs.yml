@@ -1,10 +1,10 @@
-name: Extra kernel .debs
+name: Raspberry Pi targeted .debs
 
 # Ad-hoc: build sinput-modules-<kernel> .debs for one or more Raspberry Pi
 # kernel releases from an already-released tag, and attach them to that
 # tag's existing GitHub Release. For when Raspberry Pi OS ships a new
 # kernel after a release went out -- the release workflow only builds for
-# the kernel that was current at tag time.
+# the kernels that were around at tag time.
 #
 # Run it from the Actions tab ("Run workflow"). The ref picker there
 # selects which version of *this file* runs; the `tag` input selects
@@ -29,8 +29,9 @@ on:
       kernel_releases:
         description: >-
           Raspberry Pi kernel release(s), space-separated (`uname -r` on the
-          Pi, e.g. 6.18.60+rpt-rpi-v8, or just 6.18.60). Empty = the
-          archive's current rpi-v8 kernel.
+          Pi, e.g. 6.18.60+rpt-rpi-v8, or just 6.18.60). From v0.4.3 on,
+          also latest, previous or first (oldest in the current series).
+          Empty = the archive's current rpi-v8 kernel.
         required: false
         default: ""
       attach:

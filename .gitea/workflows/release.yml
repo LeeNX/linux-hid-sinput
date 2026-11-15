@@ -58,11 +58,13 @@ jobs:
         run: |
           mkdir -p out
           ./scripts/build-source-deb.sh out
-      # sinput-common plus one sinput-modules-<kernel> .deb for the
-      # archive's current rpi-v8 kernel. For more kernels on an existing
-      # release later, see the "Extra kernels" section of RELEASE.md.
-      - name: Build binary .debs
-        run: ./scripts/build-rpi-debs.sh -o out
+      # sinput-common plus sinput-modules-<kernel> .debs for three rpi-v8
+      # kernels, same as .github/workflows/release.yml. Ubuntu .debs are
+      # only built on GitHub and GitLab: this release is attached by hand
+      # anyway (see above). For more kernels on an existing release later,
+      # see the "Extra kernels" section of RELEASE.md.
+      - name: Build Raspberry Pi .debs
+        run: ./scripts/build-rpi-debs.sh -o out first previous latest
       - name: Generate release notes
         run: |
           prev_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
