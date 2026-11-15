@@ -7,7 +7,7 @@ set -euo pipefail
 # does the actual build inside the container.
 #
 # One persistent container per Ubuntu release and arch
-# (sinput-ubuntu-<codename>-<arch>) is reused between runs, so apt's
+# (sinput-ubuntu-<version>-<arch>) is reused between runs, so apt's
 # package lists and already installed headers aren't fetched again every
 # time. Pass --rm to remove it afterwards.
 #
@@ -18,14 +18,14 @@ usage() {
 Usage: scripts/podman-build-ubuntu-debs.sh [options] [KERNEL_RELEASE...]
 
 Build sinput-common plus one sinput-modules-<release> .deb per
-KERNEL_RELEASE in an ubuntu:<codename> podman container, and copy them
+KERNEL_RELEASE in an ubuntu:<version> podman container, and copy them
 into OUTDIR.
 
 Options:
-  -t HOST      Target machine: read its Ubuntu codename, arch and running
+  -t HOST      Target machine: read its Ubuntu version, arch and running
                kernel (`uname -r`) over ssh and use them as the defaults.
-  -r CODENAME  Ubuntu release, e.g. noble or resolute (default: resolute,
-               or the target's).
+  -r RELEASE   Ubuntu release, e.g. 24.04 or 26.04 (a codename such as
+               noble works too) (default: 26.04, or the target's).
   -a ARCH      Debian arch, amd64 or arm64 (default: amd64, or the
                target's).
   -H HOST      Run podman on HOST over ssh instead of locally (e.g. a
@@ -55,7 +55,7 @@ uncommitted and untracked files included, minus anything gitignored.
 Examples:
   scripts/podman-build-ubuntu-debs.sh -t my-ubuntu-box
   scripts/podman-build-ubuntu-debs.sh -H build-box -t my-ubuntu-box -o out/my-ubuntu-box
-  scripts/podman-build-ubuntu-debs.sh -r noble 6.8.0-90-generic
+  scripts/podman-build-ubuntu-debs.sh -r 24.04 6.8.0-90-generic
 EOF
 }
 
@@ -65,7 +65,7 @@ die() {
 }
 
 TARGET=""
-CODENAME=""
+UBUNTU=""
 ARCH=""
 PODMAN_HOST=""
 OUTDIR="out"
@@ -80,7 +80,7 @@ need_arg() { [ $# -ge 2 ] || die "$1 needs an argument"; }
 while [ $# -gt 0 ]; do
 	case "$1" in
 	-t) need_arg "$@"; TARGET="$2"; shift 2 ;;
-	-r) need_arg "$@"; CODENAME="$2"; shift 2 ;;
+	-r) need_arg "$@"; UBUNTU="$2"; shift 2 ;;
 	-a) need_arg "$@"; ARCH="$2"; shift 2 ;;
 	-H) need_arg "$@"; PODMAN_HOST="$2"; shift 2 ;;
 	-o) need_arg "$@"; OUTDIR="$2"; shift 2 ;;
@@ -98,18 +98,18 @@ SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10 -o ControlMaster=no -o ControlPat
 
 if [ -n "$TARGET" ]; then
 	# shellcheck disable=SC2016 # expanded on the target, not here
-	info="$("${SSH[@]}" "$TARGET" '. /etc/os-release; echo "$ID $VERSION_CODENAME $(dpkg --print-architecture) $(uname -r)"')" ||
+	info="$("${SSH[@]}" "$TARGET" '. /etc/os-release; echo "$ID $VERSION_ID $(dpkg --print-architecture) $(uname -r)"')" ||
 		die "couldn't read the target's release over ssh: $TARGET"
-	read -r t_id t_codename t_arch t_kernel <<<"$info"
+	read -r t_id t_version t_arch t_kernel <<<"$info"
 	[ "$t_id" = ubuntu ] || die "$TARGET runs $t_id, not Ubuntu"
-	echo "Target $TARGET: Ubuntu $t_codename, $t_arch, kernel $t_kernel"
-	: "${CODENAME:=$t_codename}"
+	echo "Target $TARGET: Ubuntu $t_version, $t_arch, kernel $t_kernel"
+	: "${UBUNTU:=$t_version}"
 	: "${ARCH:=$t_arch}"
 	if [ ${#RELEASES[@]} -eq 0 ] && ! $LIST; then
 		RELEASES=("$t_kernel")
 	fi
 fi
-: "${CODENAME:=resolute}"
+: "${UBUNTU:=26.04}"
 : "${ARCH:=amd64}"
 
 # podman, locally or on PODMAN_HOST. ssh joins its arguments into one
@@ -123,11 +123,12 @@ pm() {
 }
 
 ROOTDIR="$(cd "$(dirname "$0")/.." && pwd)"
-NAME="sinput-ubuntu-${CODENAME}-${ARCH}"
+# ubuntu:24.04 and ubuntu:noble are the same image.
+NAME="sinput-ubuntu-${UBUNTU}-${ARCH}"
 
 if ! pm container exists "$NAME"; then
-	echo "Creating build container $NAME (ubuntu:$CODENAME, $ARCH)${PODMAN_HOST:+ on $PODMAN_HOST}"
-	pm run -d --name "$NAME" --arch "$ARCH" "docker.io/library/ubuntu:$CODENAME" sleep infinity >/dev/null
+	echo "Creating build container $NAME (ubuntu:$UBUNTU, $ARCH)${PODMAN_HOST:+ on $PODMAN_HOST}"
+	pm run -d --name "$NAME" --arch "$ARCH" "docker.io/library/ubuntu:$UBUNTU" sleep infinity >/dev/null
 fi
 pm start "$NAME" >/dev/null
 

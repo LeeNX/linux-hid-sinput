@@ -6,8 +6,8 @@ set -eu
 # The Ubuntu counterpart of build-rpi-debs.sh.
 #
 # It installs the kernel's own linux-headers-<release> package with apt,
-# so it must run as root inside an ubuntu:<codename> container whose
-# codename matches the target machine's Ubuntu release (that's where its
+# so it must run as root inside an ubuntu:<version> container (e.g.
+# ubuntu:26.04) matching the target machine's Ubuntu release (that's where its
 # kernel's headers, and the gcc they were built with, come from). Never
 # run it on the target itself. scripts/podman-build-ubuntu-debs.sh sets
 # that container up and calls this.
@@ -49,7 +49,11 @@ Environment:
   APT_PROXY  Optional apt HTTP proxy, e.g. http://192.0.2.10:3142.
              Skipped, with a warning, if it can't be reached.
 
-Must run as root on Ubuntu (e.g. an ubuntu:<codename> container).
+Module packages get the Ubuntu version in their version and file name,
+e.g. sinput-modules-7.0.0-43-generic_0.4.4-ubuntu26.04_amd64.deb, since
+Ubuntu releases can share a kernel release name (24.04's HWE kernels).
+
+Must run as root on Ubuntu (e.g. an ubuntu:26.04 container).
 EOF
 }
 
@@ -80,7 +84,7 @@ done
 [ "$(id -u)" -eq 0 ] || die "must run as root (it installs kernel headers with apt)"
 # shellcheck disable=SC1091 # the container's, not in the repo
 . /etc/os-release
-[ "${ID:-}" = ubuntu ] || die "not Ubuntu (ID=${ID:-unknown}); use an ubuntu:<codename> container"
+[ "${ID:-}" = ubuntu ] || die "not Ubuntu (ID=${ID:-unknown}); use an ubuntu:<version> container, e.g. ubuntu:26.04"
 
 ROOTDIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOTDIR"
@@ -153,6 +157,7 @@ resolve() {
 }
 
 mkdir -p "$OUTDIR"
+export VERSION_SUFFIX="-ubuntu${VERSION_ID}"
 BUILT=" "
 for want in ${RELEASES:-latest}; do
 	rel="$(resolve "$want")"
@@ -173,9 +178,9 @@ for want in ${RELEASES:-latest}; do
 	BUILT="${BUILT}${rel} "
 	[ "$want" = "$rel" ] || echo "${want}: ${rel}"
 	if ! apt-cache show "linux-headers-${rel}" >/dev/null 2>&1; then
-		echo "Kernel releases with headers in ${VERSION_CODENAME}'s apt sources:" >&2
+		echo "Kernel releases with headers in Ubuntu ${VERSION_ID}'s apt sources:" >&2
 		available >&2
-		die "no linux-headers-${rel} in ${VERSION_CODENAME}'s apt sources (older kernels drop out of the index; get the headers .debs from Launchpad)"
+		die "no linux-headers-${rel} in Ubuntu ${VERSION_ID}'s apt sources (older kernels drop out of the index; get the headers .debs from Launchpad)"
 	fi
 	apt-get install -y -qq "linux-headers-${rel}" >/dev/null
 	# Must be the /lib/modules/<release>/build symlink, not the

@@ -18,7 +18,10 @@ latest`, see the build scripts' `--help`):
 * **Ubuntu 26.04 and 24.04 LTS** (amd64, from
   [`scripts/build-ubuntu-debs.sh`](scripts/build-ubuntu-debs.sh), see
   [`docs/ubuntu.md`](docs/ubuntu.md)): for each, the kernel it shipped
-  with, the previous one and the latest. GitHub and GitLab only.
+  with, the previous one and the latest. GitHub and GitLab only. Their
+  versions and file names end in the Ubuntu version, e.g.
+  `sinput-modules-7.0.0-43-generic_0.4.4-ubuntu26.04_amd64.deb`, because
+  24.04's HWE kernels can share a release name with 26.04's.
 
 There is one `sinput-common` for all of them: it's `Architecture: all` and
 the same on every target. More kernels can be added to a release later

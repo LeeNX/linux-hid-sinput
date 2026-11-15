@@ -15,10 +15,23 @@ OUTDIR="${2:-.}"
 
 PACKAGE_NAME="sinput"
 PACKAGE_VERSION="$(grep '^PACKAGE_VERSION=' dkms.conf | cut -d'"' -f2)"
+# Optional, e.g. -ubuntu26.04 (set by build-ubuntu-debs.sh): appended to
+# Version: and the file name, so packages for the same kernel release
+# name built for different distro releases (Ubuntu 24.04's HWE kernel and
+# 26.04's own can share one) don't collide. Only '-', '.' and
+# alphanumerics, so GitHub release asset names keep it as is.
+VERSION_SUFFIX="${VERSION_SUFFIX:-}"
+case "$VERSION_SUFFIX" in
+*[!A-Za-z0-9.-]*)
+	echo "error: VERSION_SUFFIX may only contain letters, digits, '.' and '-': $VERSION_SUFFIX" >&2
+	exit 1
+	;;
+esac
+DEB_VERSION="${PACKAGE_VERSION}${VERSION_SUFFIX}"
 ARCH="$(dpkg --print-architecture)"
 KERNEL_RELEASE="$(basename "$(dirname "$KDIR")")"
 
-echo "Building ${PACKAGE_NAME} ${PACKAGE_VERSION} for kernel ${KERNEL_RELEASE} (${ARCH})"
+echo "Building ${PACKAGE_NAME} ${DEB_VERSION} for kernel ${KERNEL_RELEASE} (${ARCH})"
 
 make KDIR="$KDIR" clean
 make KDIR="$KDIR"
@@ -42,7 +55,7 @@ cp src/sinput.ko "$MODDIR/sinput.ko"
 # release must keep working next to a newer sinput-common.
 cat > "$WORKDIR/DEBIAN/control" <<CONTROLEOF
 Package: ${PKG}
-Version: ${PACKAGE_VERSION}
+Version: ${DEB_VERSION}
 Section: kernel
 Priority: optional
 Architecture: ${ARCH}
@@ -78,7 +91,7 @@ POSTEOF
 chmod 0755 "$WORKDIR/DEBIAN/postrm"
 
 mkdir -p "$OUTDIR"
-OUTFILE="${OUTDIR}/${PKG}_${PACKAGE_VERSION}_${ARCH}.deb"
+OUTFILE="${OUTDIR}/${PKG}_${DEB_VERSION}_${ARCH}.deb"
 dpkg-deb --root-owner-group --build "$WORKDIR" "$OUTFILE"
 
 echo "Built ${OUTFILE}"
