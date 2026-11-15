@@ -1,9 +1,13 @@
-name: Ubuntu kernel .debs
+name: Ubuntu targeted .debs
 
-# Ad-hoc: build sinput-common plus sinput-modules-<kernel> .debs for one
-# Ubuntu release and one or more of its kernels, as a workflow artifact,
+# Build sinput-common plus sinput-modules-<kernel> .debs for one Ubuntu
+# release and one or more of its kernels, as a workflow artifact,
 # optionally also attached to an existing GitHub Release. The GitHub
 # counterpart of scripts/podman-build-ubuntu-debs.sh; see docs/ubuntu.md.
+#
+# Two ways in: by hand (workflow_dispatch, below), and from release.yml
+# (workflow_call), which runs it for each LTS release with
+# `first previous latest` and attach on.
 #
 # Run it from the Actions tab ("Run workflow"). The ref picker there
 # selects which version of *this file* (and of
@@ -36,8 +40,9 @@ on:
       kernel_releases:
         description: >-
           Kernel release(s), space-separated (`uname -r` on the target, e.g.
-          7.0.0-43-generic, or just 7.0.0-43). Empty = the release's
-          current generic kernel.
+          7.0.0-43-generic, or just 7.0.0-43), or any of latest, previous,
+          first (the kernel the Ubuntu release shipped with). Empty =
+          latest.
         required: false
         default: ""
       arch:
@@ -55,6 +60,25 @@ on:
         description: >-
           Also attach the .debs to the GitHub Release for `ref` (must be a
           release tag)
+        type: boolean
+        default: false
+  # Same inputs for release.yml; workflow_call has no choice type, so
+  # ubuntu_release is just the codename there, e.g. resolute.
+  workflow_call:
+    inputs:
+      ubuntu_release:
+        type: string
+        required: true
+      kernel_releases:
+        type: string
+        default: ""
+      arch:
+        type: string
+        default: amd64
+      ref:
+        type: string
+        default: ""
+      attach:
         type: boolean
         default: false
 

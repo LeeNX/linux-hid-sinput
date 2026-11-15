@@ -37,9 +37,9 @@ Options:
   --rm         Remove the build container when done.
   -h, --help   Show this help.
 
-KERNEL_RELEASE: as in `uname -r`, e.g. 7.0.0-43-generic. Defaults to the
-target's running kernel with -t, otherwise the release's current
-generic kernel.
+KERNEL_RELEASE: as in `uname -r`, e.g. 7.0.0-43-generic, or one of
+latest, previous, first (see scripts/build-ubuntu-debs.sh --help).
+Defaults to the target's running kernel with -t, otherwise latest.
 
 Environment:
   APT_PROXY  Optional apt HTTP proxy for the container, e.g. an

@@ -116,6 +116,7 @@ releases at once. Run it as root in an arm64 `debian:trixie` container:
 ./scripts/build-rpi-debs.sh --list                       # kernels the archive has headers for
 ./scripts/build-rpi-debs.sh -o out                       # the archive's current kernel
 ./scripts/build-rpi-debs.sh -o out 6.18.50 6.18.60       # specific kernels (`uname -r` on the Pi)
+./scripts/build-rpi-debs.sh -o out first previous latest # what a release builds, e.g. 6.18.29 6.18.50 6.18.60
 ```
 
 It writes `sinput-common_<version>_all.deb` plus one
@@ -151,7 +152,7 @@ installed headers are reused between builds.
   branch or tag you want, with `kernel_releases` (GitLab: the
   `KERNEL_RELEASES` variable) set, e.g. `6.18.60`. The `rpi3-binary-deb`
   job's artifact has the `.deb`s.
-* **GitHub, straight onto the release:** run the "Extra kernel .debs"
+* **GitHub, straight onto the release:** run the "Raspberry Pi targeted .debs"
   workflow ([`.github/workflows/rpi-kernel-debs.yml`](../.github/workflows/rpi-kernel-debs.yml))
   with the release tag and kernel list. See [`RELEASE.md`](../RELEASE.md).
 

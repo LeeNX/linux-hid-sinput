@@ -8,6 +8,24 @@ device over BLE; see [`docs/research.md`](docs/research.md) for each run.
 
 ## [Unreleased]
 
+### Added
+
+- Releases ship three module packages per target instead of one:
+  - Raspberry Pi OS: the first kernel of the current series, the previous
+    one and the latest (e.g. 6.18.29, 6.18.50, 6.18.60).
+  - Ubuntu 26.04 and 24.04 LTS (amd64, new): the kernel each shipped with,
+    the previous one and the latest (e.g. 7.0.0-14, 7.0.0-42, 7.0.0-43).
+    Built on GitHub and GitLab.
+  One `sinput-common` serves them all.
+- `scripts/build-rpi-debs.sh` and `scripts/build-ubuntu-debs.sh` accept
+  `latest`, `previous` and `first` as well as kernel releases.
+
+### Changed
+
+- The ad-hoc GitHub workflows are now "Raspberry Pi targeted .debs"
+  (was "Extra kernel .debs") and "Ubuntu targeted .debs" (was "Ubuntu
+  kernel .debs").
+
 ## [0.4.2] - 2026-11-10
 
 ### Added

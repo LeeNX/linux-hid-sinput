@@ -44,6 +44,9 @@ scripts/podman-build-ubuntu-debs.sh -r noble 6.8.0-90-generic
 # The short form 6.8.0-90 means 6.8.0-90-generic; several kernels at once:
 scripts/podman-build-ubuntu-debs.sh -r noble 6.8.0-88 6.8.0-90
 
+# What a release builds: the shipped kernel, the previous one and the latest:
+scripts/podman-build-ubuntu-debs.sh -r noble first previous latest
+
 # Which kernels the release has headers for (oldest first):
 scripts/podman-build-ubuntu-debs.sh -r noble --list
 
@@ -81,7 +84,10 @@ scripts/podman-build-ubuntu-debs.sh -H build-box -t my-ubuntu-box -o out/my-ubun
 
 ### On GitHub
 
-The "Ubuntu kernel .debs" workflow
+Every release already includes packages for Ubuntu 26.04 and 24.04 LTS
+(amd64): the kernel each shipped with, the previous one and the latest.
+
+For anything else, the "Ubuntu targeted .debs" workflow
 ([`.github/workflows/ubuntu-kernel-debs.yml`](../.github/workflows/ubuntu-kernel-debs.yml))
 does the same build from the Actions tab. Pick the Ubuntu release from
 the list, and paste in kernel release(s) or leave them empty for the

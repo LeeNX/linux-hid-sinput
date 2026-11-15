@@ -6,12 +6,23 @@ Releases are git tags, plus `.deb` files: the source DKMS package
 kernel-independent support files both of the others depend on
 (`sinput-common_<version>_all.deb`, from
 [`scripts/build-common-deb.sh`](scripts/build-common-deb.sh)), and one
-precompiled Raspberry Pi binary package per kernel
-(`sinput-modules-<kernel-release>_<version>_arm64.deb`, from
-[`scripts/build-rpi-debs.sh`](scripts/build-rpi-debs.sh) — see
-[`docs/rpi-hil.md`](docs/rpi-hil.md)). A release starts with one binary
-package, for the kernel that's current when it's tagged; more can be added
-later (see "Extra kernels" below). How those files actually reach a
+precompiled binary package per kernel
+(`sinput-modules-<kernel-release>_<version>_<arch>.deb`). Each release
+builds three kernels per target, picked when it's tagged (`first previous
+latest`, see the build scripts' `--help`):
+
+* **Raspberry Pi OS** (arm64, from
+  [`scripts/build-rpi-debs.sh`](scripts/build-rpi-debs.sh), see
+  [`docs/rpi-hil.md`](docs/rpi-hil.md)): the first kernel of the current
+  series, the previous one and the latest, e.g. 6.18.29, 6.18.50, 6.18.60.
+* **Ubuntu 26.04 and 24.04 LTS** (amd64, from
+  [`scripts/build-ubuntu-debs.sh`](scripts/build-ubuntu-debs.sh), see
+  [`docs/ubuntu.md`](docs/ubuntu.md)): for each, the kernel it shipped
+  with, the previous one and the latest. GitHub and GitLab only.
+
+There is one `sinput-common` for all of them: it's `Architecture: all` and
+the same on every target. More kernels can be added to a release later
+(see "Extra kernels" below). How those files actually reach a
 release differs by platform (see "What happens after the tag is pushed"
 below) — GitHub and GitLab both automate it fully, while Gitea builds the
 files but stops short of publishing them for a network reason specific to
@@ -109,22 +120,22 @@ that commit separately.
 
 ## Extra kernels on an existing release
 
-When Raspberry Pi OS ships a new kernel after a release, add a
+When Raspberry Pi OS or Ubuntu ships a new kernel after a release, add a
 `sinput-modules-<new-kernel>` package to that release rather than cutting a
 new one. Releases from v0.4.1 on support this; earlier ones can't, because
 their per-kernel packages each shipped `/etc/sinput/ids.conf` and so can't
 be installed next to each other.
 
-* **GitHub**: Actions → "Extra kernel .debs" → Run workflow, with the
+* **GitHub**: Actions → "Raspberry Pi targeted .debs" → Run workflow, with the
   release tag (e.g. `v0.4.1`) and the kernel release(s) (e.g. `6.18.60`, or
   `6.18.60+rpt-rpi-v8` as `uname -r` prints it; empty = current). It builds
   from the tag and attaches any package the release doesn't already have.
   Running it from here needs a token with admin rights on the repository
   (`gh workflow run` returns HTTP 403 otherwise); the web UI is fine.
-* **Ubuntu (GitHub)**: Actions → "Ubuntu kernel .debs" → Run workflow, with
-  the Ubuntu release, kernel release(s) (empty = that release's current
-  kernel), `ref` set to the tag and `attach` on. Releases don't include
-  Ubuntu packages by default; this is how they're added. See
+* **Ubuntu (GitHub)**: Actions → "Ubuntu targeted .debs" → Run workflow,
+  with the Ubuntu release, kernel release(s) (empty = that release's
+  current kernel), `ref` set to the tag and `attach` on. Also the way to
+  add Ubuntu releases a release doesn't build for (e.g. 26.10). See
   [`docs/ubuntu.md`](docs/ubuntu.md).
 * **Gitea / GitLab**: run CI by hand on the tag with `kernel_releases` /
   `KERNEL_RELEASES` set, download the `rpi3-binary-deb` artifact, and attach
