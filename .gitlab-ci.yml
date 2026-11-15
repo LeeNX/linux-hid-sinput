@@ -32,7 +32,7 @@ workflow:
 # already ran the full suite on the `main` branch push that (normally)
 # preceded it, same reasoning as .github/workflows/release.yml and
 # .gitea/workflows/release.yml not re-running CI. A tag pipeline only
-# needs to rebuild the two release artifacts (build stage, unrestricted
+# needs to rebuild the release .debs (build stage, unrestricted
 # below) and publish the release (release stage).
 .skip-on-tag: &skip-on-tag
   rules:
@@ -202,7 +202,7 @@ ubuntu-binary-debs:
 
 # Mirrors .github/workflows/release.yml's release job: verify the tag
 # against dkms.conf, generate release notes from git log since the
-# previous tag, create the Release, and attach both .deb files -- but
+# previous tag, create the Release, and attach every .deb file -- but
 # through GitLab's own Releases API and Generic Package Registry
 # instead of GitHub's REST API, since neither surface carries over.
 #

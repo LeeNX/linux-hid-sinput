@@ -399,7 +399,8 @@ To reproduce the kernel-build job locally without Docker/Gitea, install
 
 See [`RELEASE.md`](RELEASE.md). Short version: `scripts/release.sh 0.1.0`
 bumps `dkms.conf`, commits, and tags locally; pushing the tag triggers the
-release workflows on all three platforms to build both `.deb` flavors.
+release workflows on all three platforms to build the `.deb`s (DKMS,
+`sinput-common`, and per-kernel packages for Raspberry Pi OS and Ubuntu LTS).
 GitHub and GitLab attach them to a Release automatically; Gitea uploads them
 as a downloadable artifact for now (a container-network DNS issue on that
 runner blocks it from reaching its own release API — see `RELEASE.md`), so

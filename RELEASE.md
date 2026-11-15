@@ -87,17 +87,19 @@ pushes) triggers two things independently:
   `.gitlab-ci.yml` (skipping that pipeline's own `test`-stage jobs — see
   the `.skip-on-tag` anchor there — since the branch push already ran
   them). All three verify `dkms.conf`'s `PACKAGE_VERSION` matches the tag
-  (fails fast if a tag was created some other way) and build both `.deb`
-  files, then diverge:
+  (fails fast if a tag was created some other way) and build the `.deb`
+  files listed at the top (Ubuntu ones on GitHub and GitLab only), then
+  diverge:
   * **GitHub** generates release notes from `git log` since the previous
     tag, creates the Release via the REST API (using the auto-issued
-    `GITHUB_TOKEN`, no secret to create), and uploads both files as assets.
+    `GITHUB_TOKEN`, no secret to create), and uploads every `.deb` as an
+    asset. A second job then builds and attaches the Ubuntu packages.
   * **GitLab** does the same via its own Releases API and Generic Package
     Registry, authenticating with the auto-issued `CI_JOB_TOKEN` (no secret
     to create there either) — the `.deb` files are uploaded to the Generic
     Package Registry first, then linked onto the Release as assets, since
     GitLab has no per-release upload URL the way GitHub's response does.
-  * **Gitea** uploads both `.deb` files plus the generated release notes as
+  * **Gitea** uploads all its `.deb` files plus the generated release notes as
     a plain downloadable workflow artifact instead of creating the Release
     automatically. This Gitea instance's job containers can reach the
     public internet (they install the Raspberry Pi apt archive over HTTPS
@@ -109,7 +111,7 @@ pushes) triggers two things independently:
     that's addressed, creating the actual Gitea Release is a manual step:
     download the artifact from the workflow run, pick the release from the
     already-pushed tag in the Gitea web UI, paste in `release-notes.md`,
-    and attach the two `.deb` files.
+    and attach every `.deb` in the artifact.
 
 These release jobs are deliberately **not** chained to the main CI workflow
 (e.g. via `workflow_run`/`needs` across pipelines) — they don't re-verify
@@ -126,7 +128,7 @@ new one. Releases from v0.4.1 on support this; earlier ones can't, because
 their per-kernel packages each shipped `/etc/sinput/ids.conf` and so can't
 be installed next to each other.
 
-* **GitHub**: Actions → "Raspberry Pi targeted .debs" → Run workflow, with the
+* **Raspberry Pi (GitHub)**: Actions → "Raspberry Pi targeted .debs" → Run workflow, with the
   release tag (e.g. `v0.4.1`) and the kernel release(s) (e.g. `6.18.60`, or
   `6.18.60+rpt-rpi-v8` as `uname -r` prints it; empty = current). It builds
   from the tag and attaches any package the release doesn't already have.
@@ -137,12 +139,18 @@ be installed next to each other.
   current kernel), `ref` set to the tag and `attach` on. Also the way to
   add Ubuntu releases a release doesn't build for (e.g. 26.10). See
   [`docs/ubuntu.md`](docs/ubuntu.md).
-* **Gitea / GitLab**: run CI by hand on the tag with `kernel_releases` /
-  `KERNEL_RELEASES` set, download the `rpi3-binary-deb` artifact, and attach
-  the `sinput-modules-*.deb` to the release by hand.
+* **Raspberry Pi (Gitea / GitLab)**: run CI by hand on the tag with
+  `kernel_releases` / `KERNEL_RELEASES` set, download the `rpi3-binary-deb`
+  artifact, and attach the `sinput-modules-*.deb` to the release by hand.
+  There's no equivalent for extra Ubuntu kernels on Gitea or GitLab (the
+  GitLab `ubuntu-binary-debs` job only builds its fixed `first previous
+  latest`): build them with the GitHub workflow above or locally, and
+  attach them by hand.
 * **Locally**: `scripts/build-rpi-debs.sh` in an arm64 `debian:trixie`
   container against a checkout of the tag (see
-  [`docs/rpi-hil.md`](docs/rpi-hil.md)), then
+  [`docs/rpi-hil.md`](docs/rpi-hil.md)), or
+  `scripts/podman-build-ubuntu-debs.sh` for Ubuntu (see
+  [`docs/ubuntu.md`](docs/ubuntu.md)), then
   `gh release upload <tag> out/sinput-modules-*.deb`.
 
 GitHub stores `+` in asset names as `.`, so
