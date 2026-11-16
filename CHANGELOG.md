@@ -8,6 +8,8 @@ device over BLE; see [`docs/research.md`](docs/research.md) for each run.
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-11-16
+
 ### Changed
 
 - Ubuntu module packages carry the Ubuntu version in their version and
@@ -218,7 +220,8 @@ First release.
 - CI on Gitea, GitHub and GitLab, and release tooling (`scripts/release.sh`
   plus release workflows that attach both `.deb` files).
 
-[Unreleased]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/LeeNX/linux-hid-sinput/compare/v0.4.0...v0.4.1
