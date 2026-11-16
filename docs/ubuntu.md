@@ -20,15 +20,23 @@ target runs one of those, run this on the target, with `V` set to the
 release:
 
 ```sh
-V=0.4.4; D=$(mktemp -d) && cd "$D" && u=https://github.com/LeeNX/linux-hid-sinput/releases/download/v$V && curl -fLO "$u/sinput-common_${V}_all.deb" && curl -fLO "$u/sinput-modules-$(uname -r)_${V}-ubuntu$(. /etc/os-release; echo "$VERSION_ID")_$(dpkg --print-architecture).deb" && sudo apt install -y ./*.deb && { sudo modprobe -r sinput 2>/dev/null; sudo modprobe sinput; }; s=$?; cd / && rm -rf "$D"; (exit $s)
+V=0.4.4; D=$(mktemp -d) && cd "$D" && u=https://github.com/LeeNX/linux-hid-sinput/releases/download/v$V && curl -fLO "$u/sinput-common_${V}_all.deb" && curl -fLO "$u/sinput-modules-$(uname -r)_${V}-ubuntu$(. /etc/os-release; echo "$VERSION_ID")_$(dpkg --print-architecture).deb" && sudo apt install -y ./*.deb && { [ ! -d /sys/module/sinput ] || sudo modprobe -r sinput; } && sudo modprobe sinput; s=$?; cd / && rm -rf "$D"; (exit $s)
 ```
 
 It downloads `sinput-common` and the module package for the running
 kernel and Ubuntu release into a private temporary directory, installs or
-upgrades them, and (re)loads the module. `modinfo -F version sinput`
-should then print the release's version, with the `-ubuntuXX.YY` suffix
-on 0.4.4 and later. Releases up to 0.4.3 don't have that suffix in their
-Ubuntu file names: drop `-ubuntu$(...)` from the command for those.
+upgrades them, and (re)loads the module. If the old module can't be
+unloaded (e.g. something holds it open), the command fails rather than
+leaving the old driver running: unplug the controller and run it again, or
+reboot. `modinfo -F version sinput` should then print the release's
+version (without a suffix), and `dpkg -l 'sinput*'` the package versions,
+with `-ubuntuXX.YY` on 0.4.4 and later. Releases up to 0.4.3 don't have
+that suffix in their Ubuntu file names: drop `-ubuntu$(...)` from the
+command for those.
+
+If `sinput-dkms` is installed, remove it first (`sudo apt remove
+sinput-dkms`): its module takes precedence over the precompiled one (see
+[Troubleshooting](#troubleshooting)).
 
 If `curl` reports a 404, the release has no package for this kernel, e.g.
 24.04's newer HWE kernels (`7.0.0-*` on 24.04). Build one instead, below.
