@@ -69,10 +69,14 @@ checkpatch:
   <<: *skip-on-tag
   script:
     - apt-get update -qq && apt-get install -y -qq perl wget
+    # From kernel.org, pinned to a kernel release tag (see the same step
+    # in .github/workflows/ci.yml for why). Bump it with the other CIs.
     - mkdir -p /tmp/checkpatch
-    - wget -q -O /tmp/checkpatch/checkpatch.pl https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl
-    - wget -q -O /tmp/checkpatch/spelling.txt https://raw.githubusercontent.com/torvalds/linux/master/scripts/spelling.txt
-    - wget -q -O /tmp/checkpatch/const_structs.checkpatch https://raw.githubusercontent.com/torvalds/linux/master/scripts/const_structs.checkpatch
+    - |
+      for f in checkpatch.pl spelling.txt const_structs.checkpatch; do
+        wget -nv --tries=3 --waitretry=5 --retry-on-http-error=429,500,502,503 \
+          -O "/tmp/checkpatch/$f" "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/scripts/$f?h=v7.3"
+      done
     - |
       perl /tmp/checkpatch/checkpatch.pl --no-tree --no-signoff \
         --ignore=LINUX_VERSION_CODE,CONSTANT_COMPARISON \
@@ -190,7 +194,8 @@ ubuntu-binary-debs:
   image: ubuntu:$UBUNTU_RELEASE
   parallel:
     matrix:
-      - UBUNTU_RELEASE: [resolute, noble]
+      # Ubuntu versions (image tags), quoted so YAML keeps them strings.
+      - UBUNTU_RELEASE: ["26.04", "24.04"]
   rules:
     - if: '$CI_COMMIT_TAG'
     - if: '$CI_PIPELINE_SOURCE == "web"'

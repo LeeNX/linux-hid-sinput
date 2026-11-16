@@ -8,6 +8,28 @@ device over BLE; see [`docs/research.md`](docs/research.md) for each run.
 
 ## [Unreleased]
 
+### Changed
+
+- Ubuntu module packages carry the Ubuntu version in their version and
+  file name, e.g. `sinput-modules-7.0.0-43-generic_0.4.4-ubuntu26.04_amd64.deb`.
+  Ubuntu 24.04's HWE kernels can have the same release name as 26.04's
+  own (both have a `7.0.0-43-generic`), but they're different builds: a
+  module built for one doesn't load on the other (36 of the 61 symbol
+  versions sinput uses differ), and the two packages used to get the
+  same file name. Raspberry Pi packages are unchanged.
+- Ubuntu releases are picked by version number instead of codename: the
+  "Ubuntu targeted .debs" list reads `26.04 LTS (resolute)` etc., and
+  `scripts/podman-build-ubuntu-debs.sh -r` takes `24.04` (codenames still
+  work).
+- CI fetches `checkpatch.pl` from kernel.org, pinned to Linux v7.3, with
+  retries. Downloading it from raw.githubusercontent.com failed on
+  GitHub's runners, apparently rate limited.
+
+### Added
+
+- `docs/ubuntu.md` has a one-line install or upgrade straight from a
+  GitHub release, run on the target.
+
 ## [0.4.3] - 2026-11-15
 
 ### Added

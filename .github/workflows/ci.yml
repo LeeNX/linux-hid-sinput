@@ -88,11 +88,19 @@ jobs:
           apt-get install -y -qq nodejs git
       - uses: actions/checkout@v7.0.1
       - name: Fetch checkpatch.pl
+        # From kernel.org, pinned to a kernel release tag: GitHub rate-limits
+        # unauthenticated raw.githubusercontent.com downloads from Actions
+        # runners (wget exit 8, twice on 2026-11-15), and master can gain
+        # new checks that fail CI with no change here. Bump the tag now
+        # and then, in all three CI files.
+        env:
+          KERNEL_TAG: v7.3
         run: |
           mkdir -p /tmp/checkpatch
-          wget -q -O /tmp/checkpatch/checkpatch.pl https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl
-          wget -q -O /tmp/checkpatch/spelling.txt https://raw.githubusercontent.com/torvalds/linux/master/scripts/spelling.txt
-          wget -q -O /tmp/checkpatch/const_structs.checkpatch https://raw.githubusercontent.com/torvalds/linux/master/scripts/const_structs.checkpatch
+          for f in checkpatch.pl spelling.txt const_structs.checkpatch; do
+            wget -nv --tries=3 --waitretry=5 --retry-on-http-error=429,500,502,503 \
+              -O "/tmp/checkpatch/$f" "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/scripts/$f?h=$KERNEL_TAG"
+          done
       - name: checkpatch
         run: |
           perl /tmp/checkpatch/checkpatch.pl --no-tree --no-signoff \

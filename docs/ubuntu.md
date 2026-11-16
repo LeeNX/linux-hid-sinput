@@ -12,10 +12,40 @@ own, the source DKMS package (`scripts/build-source-deb.sh`, see the
 target itself after each kernel update. Use a precompiled `.deb` when you
 want a kernel pinned exactly, or don't want build tools on the target.
 
+## Quick install or upgrade from a release
+
+Releases include packages for Ubuntu 26.04 and 24.04 LTS (amd64): the
+kernel each shipped with, the previous one and the latest. If the
+target runs one of those, run this on the target, with `V` set to the
+release:
+
+```sh
+V=0.4.4; D=$(mktemp -d) && cd "$D" && u=https://github.com/LeeNX/linux-hid-sinput/releases/download/v$V && curl -fLO "$u/sinput-common_${V}_all.deb" && curl -fLO "$u/sinput-modules-$(uname -r)_${V}-ubuntu$(. /etc/os-release; echo "$VERSION_ID")_$(dpkg --print-architecture).deb" && sudo apt install -y ./*.deb && { [ ! -d /sys/module/sinput ] || sudo modprobe -r sinput; } && sudo modprobe sinput; s=$?; cd / && rm -rf "$D"; (exit $s)
+```
+
+It downloads `sinput-common` and the module package for the running
+kernel and Ubuntu release into a private temporary directory, installs or
+upgrades them, and (re)loads the module. If the old module can't be
+unloaded (e.g. something holds it open), the command fails rather than
+leaving the old driver running: unplug the controller and run it again, or
+reboot. `modinfo -F version sinput` should then print the release's
+version (without a suffix), and `dpkg -l 'sinput*'` the package versions,
+with `-ubuntuXX.YY` on 0.4.4 and later. Releases up to 0.4.3 don't have
+that suffix in their Ubuntu file names: drop `-ubuntu$(...)` from the
+command for those.
+
+If `sinput-dkms` is installed, remove it first (`sudo apt remove
+sinput-dkms`): its module takes precedence over the precompiled one (see
+[Troubleshooting](#troubleshooting)).
+
+If `curl` reports a 404, the release has no package for this kernel, e.g.
+24.04's newer HWE kernels (`7.0.0-*` on 24.04). Build one instead, below.
+
 ## Building
 
 [`scripts/podman-build-ubuntu-debs.sh`](../scripts/podman-build-ubuntu-debs.sh)
-runs the build in an `ubuntu:<codename>` container and copies the result
+runs the build in an `ubuntu:<version>` container (e.g. `ubuntu:26.04`)
+and copies the result
 to a local directory. The quickest way is to point it at the target with
 `-t`. It reads the target's Ubuntu release, architecture and running
 kernel over ssh and builds for exactly that:
@@ -27,9 +57,14 @@ scripts/podman-build-ubuntu-debs.sh -t my-ubuntu-box -o out/my-ubuntu-box
 This writes two packages:
 
 ```
-out/my-ubuntu-box/sinput-common_0.4.1_all.deb
-out/my-ubuntu-box/sinput-modules-7.0.0-43-generic_0.4.1_amd64.deb
+out/my-ubuntu-box/sinput-common_0.4.4_all.deb
+out/my-ubuntu-box/sinput-modules-7.0.0-43-generic_0.4.4-ubuntu26.04_amd64.deb
 ```
+
+The module package's version ends in the Ubuntu version (`-ubuntu26.04`):
+24.04's HWE kernels can have the same release name as 26.04's own, e.g.
+`7.0.0-43-generic`, but they're different builds, and a module built for
+one won't load on the other. The suffix keeps the files apart.
 
 `sinput-common` holds the parts that don't depend on the kernel (udev rule,
 claim helper, `/etc/sinput/ids.conf`). `sinput-modules-<kernel-release>`
@@ -39,16 +74,16 @@ Other ways to call it:
 
 ```sh
 # Explicit Ubuntu release and kernel, no target access needed:
-scripts/podman-build-ubuntu-debs.sh -r noble 6.8.0-90-generic
+scripts/podman-build-ubuntu-debs.sh -r 24.04 6.8.0-90-generic
 
 # The short form 6.8.0-90 means 6.8.0-90-generic; several kernels at once:
-scripts/podman-build-ubuntu-debs.sh -r noble 6.8.0-88 6.8.0-90
+scripts/podman-build-ubuntu-debs.sh -r 24.04 6.8.0-88 6.8.0-90
 
 # What a release builds: the shipped kernel, the previous one and the latest:
-scripts/podman-build-ubuntu-debs.sh -r noble first previous latest
+scripts/podman-build-ubuntu-debs.sh -r 24.04 first previous latest
 
 # Which kernels the release has headers for (oldest first):
-scripts/podman-build-ubuntu-debs.sh -r noble --list
+scripts/podman-build-ubuntu-debs.sh -r 24.04 --list
 
 # Run podman on another machine (e.g. a faster Linux box) over ssh; the
 # .debs still land in -o on this machine:
@@ -62,7 +97,7 @@ scripts/podman-build-ubuntu-debs.sh -H build-box -t my-ubuntu-box -o out/my-ubun
   container may not be able to resolve LAN-only hostnames. If the proxy
   can't be reached, the build warns and downloads directly.
 * **Container reuse.** One container per release and arch
-  (`sinput-ubuntu-<codename>-<arch>`) is kept and reused, so later builds
+  (`sinput-ubuntu-<version>-<arch>`) is kept and reused, so later builds
   skip most of the apt work (about a minute instead of a few). Pass `--rm`
   to delete it afterwards, or `podman rm -f` it yourself.
 * **What gets built.** The working tree as it is: uncommitted changes and
@@ -187,7 +222,7 @@ Each module package is tied to one kernel release, and packages for
 several kernels can be installed side by side. When Ubuntu offers a new
 kernel:
 
-1. Build for it, e.g. `-r noble 6.8.0-91` (`--list` shows when the
+1. Build for it, e.g. `-r 24.04 6.8.0-91` (`--list` shows when the
    headers are out).
 2. Copy and install its package on the target *before* rebooting (the
    second command [above](#installing-on-the-target-one-line)).

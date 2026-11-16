@@ -295,17 +295,18 @@ kernel) and builds `sinput-common` plus one package per kernel. See
 
 For Ubuntu targets,
 [`./scripts/podman-build-ubuntu-debs.sh`](scripts/podman-build-ubuntu-debs.sh)
-does the same in an `ubuntu:<codename>` podman container
+does the same in an `ubuntu:<version>` podman container
 (via [`scripts/build-ubuntu-debs.sh`](scripts/build-ubuntu-debs.sh)) and
 copies the `.deb`s to `out/`. `-t HOST` reads the target's Ubuntu release,
 arch and running kernel over ssh; `-H HOST` runs podman on another machine.
 [`docs/ubuntu.md`](docs/ubuntu.md) covers the one-line install on the
-target, Secure Boot and kernel upgrades:
+target (including straight from a release), Secure Boot and kernel
+upgrades:
 
 ```sh
 scripts/podman-build-ubuntu-debs.sh -t my-ubuntu-box              # its running kernel
-scripts/podman-build-ubuntu-debs.sh -r noble 6.8.0-90-generic     # explicit
-scripts/podman-build-ubuntu-debs.sh -r noble --list               # kernels with headers
+scripts/podman-build-ubuntu-debs.sh -r 24.04 6.8.0-90-generic     # explicit
+scripts/podman-build-ubuntu-debs.sh -r 24.04 --list               # kernels with headers
 ```
 
 Both scripts are plain POSIX `sh`, no `dh`/`dpkg-buildpackage` involved —
